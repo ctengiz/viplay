@@ -2,259 +2,135 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/jpeg"
-	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/thesyncim/goh264"
-	xdraw "golang.org/x/image/draw"
-	fontdraw "golang.org/x/image/font"
-	"golang.org/x/image/font/basicfont"
-	"golang.org/x/image/math/fixed"
 )
 
-type splitTrack struct {
-	in    *mp4.TrakBox
-	outID uint32
-	first uint32
-	last  uint32
+const ffmpegInstallMessage = "FFmpeg bulunamadı. Bu işlem için FFmpeg'i sisteminize kurup uygulamayı yeniden başlatın. macOS: brew install ffmpeg · Windows: winget install Gyan.FFmpeg · Linux: paket yöneticinizden ffmpeg paketini kurun."
+
+func requireMediaTool(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err == nil {
+		return path, nil
+	}
+	if runtime.GOOS == "darwin" {
+		for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+			candidate := filepath.Join(dir, name)
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+				return candidate, nil
+			}
+		}
+	}
+	return "", missingMediaToolError(name)
+}
+
+func missingMediaToolError(name string) error {
+	if name == "ffprobe" {
+		return fmt.Errorf("FFmpeg kurulumu eksik: ffprobe bulunamadı. ffmpeg ve ffprobe komutlarının PATH içinde olduğundan emin olun; ardından uygulamayı yeniden başlatın")
+	}
+	return fmt.Errorf("%s", ffmpegInstallMessage)
 }
 
 func splitMP4(path string, seconds float64) (SplitResult, error) {
-	if !isISOBaseMedia(path) {
-		return SplitResult{}, fmt.Errorf("split şu anda MP4/MOV dosyalarını destekliyor")
-	}
-	f, parsed, err := decodeMP4(path)
+	ffmpeg, err := requireMediaTool("ffmpeg")
 	if err != nil {
 		return SplitResult{}, err
 	}
-	defer f.Close()
-	if parsed.IsFragmented() || parsed.Moov == nil {
-		return SplitResult{}, fmt.Errorf("yalnızca progressive MP4 destekleniyor")
+	duration, err := mediaDuration(path)
+	if err != nil {
+		return SplitResult{}, err
 	}
-	duration := float64(parsed.Moov.Mvhd.Duration) / float64(parsed.Moov.Mvhd.Timescale)
-	if seconds <= 0.05 || seconds >= duration-0.05 {
+	if seconds <= .05 || seconds >= duration-.05 {
 		return SplitResult{}, fmt.Errorf("bölme noktası videonun içinde olmalı")
 	}
-	actual, err := nextVideoSyncTime(parsed, seconds)
+
+	dir := filepath.Dir(path)
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		ext = ".mp4"
+	}
+	base := strings.TrimSuffix(path, filepath.Ext(path))
+	first := availableOutput(base+"_part1", ext)
+	second := availableOutput(base+"_part2", ext)
+	tempDir, err := os.MkdirTemp(dir, ".viplay-split-")
 	if err != nil {
 		return SplitResult{}, err
 	}
-	if actual <= 0.05 || actual >= duration-0.05 {
-		return SplitResult{}, fmt.Errorf("bu noktaya yakın kullanılabilir bir anahtar kare yok")
+	defer os.RemoveAll(tempDir)
+	pattern := filepath.Join(tempDir, "part_%d"+ext)
+
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-i", path,
+		"-map", "0:v:0", "-map", "0:a?", "-map", "0:s?",
+		"-c", "copy",
+		"-f", "segment", "-segment_times", formatSeconds(seconds),
+		"-reset_timestamps", "1", pattern,
 	}
-	base := strings.TrimSuffix(path, filepath.Ext(path))
-	ext := ".mp4"
-	first := availableOutput(base+"_part1", ext)
-	second := availableOutput(base+"_part2", ext)
-	if err := writeMP4Part(f, parsed, first, 0, actual); err != nil {
+	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+		return SplitResult{}, mediaToolError("Video bölünemedi", runErr, output)
+	}
+	tempFirst := filepath.Join(tempDir, "part_0"+ext)
+	tempSecond := filepath.Join(tempDir, "part_1"+ext)
+	if _, err := os.Stat(tempSecond); err != nil {
+		return SplitResult{}, fmt.Errorf("video bölünemedi: seçilen noktadan sonra ikinci bir bölüm oluşturulamadı")
+	}
+	actual, err := mediaDuration(tempFirst)
+	if err != nil {
 		return SplitResult{}, err
 	}
-	if err := writeMP4Part(f, parsed, second, actual, duration); err != nil {
+	if err := os.Rename(tempFirst, first); err != nil {
+		return SplitResult{}, err
+	}
+	if err := os.Rename(tempSecond, second); err != nil {
 		_ = os.Remove(first)
 		return SplitResult{}, err
 	}
 	return SplitResult{FirstPath: first, SecondPath: second, SplitTime: actual}, nil
 }
 
-func nextVideoSyncTime(parsed *mp4.File, seconds float64) (float64, error) {
-	for _, track := range parsed.Moov.Traks {
-		if track.Mdia.Hdlr.HandlerType != "vide" {
-			continue
-		}
-		stbl := track.Mdia.Minf.Stbl
-		scale := track.Mdia.Mdhd.Timescale
-		nr, err := stbl.Stts.GetSampleNrAtTime(uint64(seconds * float64(scale)))
-		if err != nil {
-			return 0, err
-		}
-		if stbl.Stss != nil {
-			original := nr
-			for nr <= track.GetNrSamples() && !stbl.Stss.IsSyncSample(nr) {
-				nr++
-			}
-			if nr > track.GetNrSamples() {
-				nr = original
-				for nr > 1 && !stbl.Stss.IsSyncSample(nr) {
-					nr--
-				}
-			}
-		}
-		if nr > track.GetNrSamples() {
-			return 0, fmt.Errorf("bölme noktasından sonra anahtar kare yok")
-		}
-		t, _ := stbl.Stts.GetDecodeTime(nr)
-		return float64(t) / float64(scale), nil
-	}
-	return seconds, nil
+type ffprobeResult struct {
+	Format struct {
+		Duration string `json:"duration"`
+	} `json:"format"`
 }
 
-func writeMP4Part(reader *os.File, source *mp4.File, output string, start, end float64) error {
-	init := mp4.CreateEmptyInit()
-	tracks := make([]splitTrack, 0, len(source.Moov.Traks))
-	for _, in := range source.Moov.Traks {
-		kind := in.Mdia.Hdlr.HandlerType
-		if kind != "vide" && kind != "soun" {
-			continue
-		}
-		mediaType := map[string]string{"vide": "video", "soun": "audio"}[kind]
-		out := init.AddEmptyTrack(in.Mdia.Mdhd.Timescale, mediaType, in.Mdia.Mdhd.GetLanguage())
-		if err := copySampleDescription(in.Mdia.Minf.Stbl.Stsd, out.Mdia.Minf.Stbl.Stsd); err != nil {
-			return err
-		}
-		tracks = append(tracks, splitTrack{in: in, outID: out.Tkhd.TrackID})
-	}
-	ids := make([]uint32, len(tracks))
-	for i := range tracks {
-		ids[i] = tracks[i].outID
-	}
-	frag, err := mp4.CreateMultiTrackFragment(1, ids)
+func mediaDuration(path string) (float64, error) {
+	ffprobe, err := requireMediaTool("ffprobe")
 	if err != nil {
-		return err
+		return 0, err
 	}
-	for i := range tracks {
-		track := &tracks[i]
-		stbl := track.in.Mdia.Minf.Stbl
-		scale := track.in.Mdia.Mdhd.Timescale
-		first, err := stbl.Stts.GetSampleNrAtTime(uint64(start * float64(scale)))
-		if err != nil && start > 0 {
-			return err
-		}
-		if first < 1 {
-			first = 1
-		}
-		last, err := stbl.Stts.GetSampleNrAtTime(uint64(end * float64(scale)))
-		if err != nil {
-			last = track.in.GetNrSamples() + 1
-		}
-		if last > 1 {
-			last--
-		}
-		if last > track.in.GetNrSamples() {
-			last = track.in.GetNrSamples()
-		}
-		if first > last {
-			continue
-		}
-		track.first, track.last = first, last
-		for n := first; n <= last; n++ {
-			sample := sampleMetadata(stbl, n)
-			if err := frag.AddSampleToTrack(sample, track.outID, 0); err != nil {
-				return err
-			}
-		}
+	output, runErr := exec.Command(ffprobe,
+		"-v", "error", "-show_entries", "format=duration",
+		"-of", "json", path,
+	).CombinedOutput()
+	if runErr != nil {
+		return 0, mediaToolError("Video süresi okunamadı", runErr, output)
 	}
-	segment := mp4.NewMediaSegment()
-	segment.AddFragment(frag)
-	out, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
+	var result ffprobeResult
+	if err := json.Unmarshal(output, &result); err != nil {
+		return 0, fmt.Errorf("video süresi okunamadı: %w", err)
 	}
-	ok := false
-	defer func() {
-		out.Close()
-		if !ok {
-			_ = os.Remove(output)
-		}
-	}()
-	if err := init.Encode(out); err != nil {
-		return err
+	duration, err := strconv.ParseFloat(result.Format.Duration, 64)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("video süresi okunamadı")
 	}
-	if err := segment.Encode(out); err != nil {
-		return err
-	}
-	for _, track := range tracks {
-		for n := track.first; n > 0 && n <= track.last; n++ {
-			if err := copySampleBytes(reader, out, track.in, n); err != nil {
-				return err
-			}
-		}
-	}
-	ok = true
-	return out.Close()
-}
-
-func copySampleDescription(in, out *mp4.StsdBox) error {
-	switch {
-	case in.AvcX != nil:
-		out.AddChild(in.AvcX)
-	case in.HvcX != nil:
-		out.AddChild(in.HvcX)
-	case in.Av01 != nil:
-		out.AddChild(in.Av01)
-	case in.Mp4a != nil:
-		out.AddChild(in.Mp4a)
-	case in.AC3 != nil:
-		out.AddChild(in.AC3)
-	case in.EC3 != nil:
-		out.AddChild(in.EC3)
-	case in.Opus != nil:
-		out.AddChild(in.Opus)
-	default:
-		return fmt.Errorf("desteklenmeyen MP4 codec")
-	}
-	return nil
-}
-
-func copySampleBytes(reader io.ReadSeeker, writer io.Writer, track *mp4.TrakBox, n uint32) error {
-	stbl := track.Mdia.Minf.Stbl
-	chunk, chunkStart, err := stbl.Stsc.ChunkNrFromSampleNr(int(n))
-	if err != nil {
-		return err
-	}
-	var offset uint64
-	if stbl.Stco != nil {
-		offset = uint64(stbl.Stco.ChunkOffset[chunk-1])
-	} else {
-		offset = stbl.Co64.ChunkOffset[chunk-1]
-	}
-	for sample := chunkStart; sample < int(n); sample++ {
-		offset += uint64(stbl.Stsz.GetSampleSize(sample))
-	}
-	size := stbl.Stsz.GetSampleSize(int(n))
-	if _, err := reader.Seek(int64(offset), io.SeekStart); err != nil {
-		return err
-	}
-	_, err = io.CopyN(writer, reader, int64(size))
-	return err
-}
-
-func sampleMetadata(stbl *mp4.StblBox, n uint32) mp4.Sample {
-	size := stbl.Stsz.GetSampleSize(int(n))
-	_, dur := stbl.Stts.GetDecodeTime(n)
-	cto := int32(0)
-	if stbl.Ctts != nil {
-		cto = stbl.Ctts.GetCompositionTimeOffset(n)
-	}
-	return mp4.Sample{Flags: sampleFlags(stbl, n), Dur: dur, Size: size, CompositionTimeOffset: cto}
-}
-
-func sampleFlags(stbl *mp4.StblBox, n uint32) uint32 {
-	var f mp4.SampleFlags
-	if stbl.Stss != nil {
-		sync := stbl.Stss.IsSyncSample(n)
-		f.SampleIsNonSync = !sync
-		if sync {
-			f.SampleDependsOn = 2
-		}
-	}
-	return f.Encode()
+	return duration, nil
 }
 
 func extractContactSheet(path string, count, cellW, columns int) (string, error) {
-	info, err := probeMediaPureGo(path)
+	ffmpeg, err := requireMediaTool("ffmpeg")
 	if err != nil {
 		return "", err
-	}
-	if info.Duration <= 0 {
-		return "", fmt.Errorf("video süresi okunamadı")
 	}
 	if count < 1 || count > 60 {
 		return "", fmt.Errorf("kare sayısı 1 ile 60 arasında olmalı")
@@ -262,45 +138,82 @@ func extractContactSheet(path string, count, cellW, columns int) (string, error)
 	if cellW < 160 || cellW > 640 {
 		return "", fmt.Errorf("görsel genişliği 160 ile 640 piksel arasında olmalı")
 	}
-	cellH := cellW * 9 / 16
-	rows := (count + columns - 1) / columns
-	sheet := image.NewRGBA(image.Rect(0, 0, cellW*columns, cellH*rows))
-	draw.Draw(sheet, sheet.Bounds(), &image.Uniform{color.RGBA{10, 11, 13, 255}}, image.Point{}, draw.Src)
-	for i := 0; i < count; i++ {
-		timestamp := info.Duration * float64(i+1) / float64(count+1)
-		frame, err := decodeH264FrameAt(path, timestamp)
-		if err != nil {
-			return "", fmt.Errorf("%.1f saniyedeki kare: %w", timestamp, err)
-		}
-		img, err := frameImage(frame, cellW, cellH)
-		if err != nil {
-			return "", err
-		}
-		x, y := (i%columns)*cellW, (i/columns)*cellH
-		draw.Draw(sheet, image.Rect(x, y, x+cellW, y+cellH), img, image.Point{}, draw.Src)
-		drawTimestamp(sheet, x, y, timestamp)
+	if columns < 1 {
+		return "", fmt.Errorf("sütun sayısı en az 1 olmalı")
 	}
-	output := availableOutput(strings.TrimSuffix(path, filepath.Ext(path))+"_contact-sheet", ".jpg")
-	f, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	duration, err := mediaDuration(path)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	if err := jpeg.Encode(f, sheet, &jpeg.Options{Quality: 95}); err != nil {
+	interval := duration / float64(count+1)
+	rows := (count + columns - 1) / columns
+	cellH := cellW * 9 / 16
+	filters := []string{
+		fmt.Sprintf("fps=fps=1/%s:start_time=%s", formatSeconds(interval), formatSeconds(interval)),
+		fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", cellW, cellH),
+		fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black", cellW, cellH),
+	}
+	if ffmpegSupportsFilter(ffmpeg, "drawtext") {
+		filters = append(filters, "drawtext=text='%{pts\\:hms}':x=8:y=8:fontsize=18:fontcolor=white:box=1:boxcolor=black@0.65")
+	}
+	filters = append(filters, fmt.Sprintf("tile=%dx%d:nb_frames=%d:padding=2:margin=2", columns, rows, count))
+	filter := strings.Join(filters, ",")
+	output := availableOutput(strings.TrimSuffix(path, filepath.Ext(path))+"_contact-sheet", ".jpg")
+	temp, err := os.CreateTemp(filepath.Dir(output), ".viplay-contact-*.jpg")
+	if err != nil {
+		return "", err
+	}
+	tempPath := temp.Name()
+	if err := temp.Close(); err != nil {
+		return "", err
+	}
+	_ = os.Remove(tempPath)
+	defer os.Remove(tempPath)
+
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-i", path, "-vf", filter, "-frames:v", "1", "-q:v", "2", tempPath,
+	}
+	if data, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+		return "", mediaToolError("Contact sheet oluşturulamadı", runErr, data)
+	}
+	if err := os.Rename(tempPath, output); err != nil {
 		return "", err
 	}
 	return output, nil
 }
 
-func drawTimestamp(img *image.RGBA, x, y int, seconds float64) {
-	total := int(seconds + .5)
-	label := fmt.Sprintf("%02d:%02d:%02d", total/3600, (total%3600)/60, total%60)
-	padding := 5
-	width := len(label)*7 + padding*2
-	height := 13 + padding*2
-	draw.Draw(img, image.Rect(x, y, x+width, y+height), &image.Uniform{color.RGBA{0, 0, 0, 190}}, image.Point{}, draw.Over)
-	d := &fontdraw.Drawer{Dst: img, Src: &image.Uniform{color.White}, Face: basicfont.Face7x13, Dot: fixed.P(x+padding, y+padding+13)}
-	d.DrawString(label)
+func ffmpegSupportsFilter(ffmpeg, name string) bool {
+	output, err := exec.Command(ffmpeg, "-hide_banner", "-filters").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return ffmpegFilterListed(string(output), name)
+}
+
+func ffmpegFilterListed(output, name string) bool {
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func formatSeconds(value float64) string {
+	return strconv.FormatFloat(value, 'f', 6, 64)
+}
+
+func mediaToolError(action string, err error, output []byte) error {
+	detail := strings.TrimSpace(string(output))
+	if len(detail) > 800 {
+		detail = detail[len(detail)-800:]
+	}
+	if detail == "" {
+		return fmt.Errorf("%s: %w", strings.ToLower(action), err)
+	}
+	return fmt.Errorf("%s: %s", strings.ToLower(action), detail)
 }
 
 func availableOutput(base, ext string) string {
@@ -313,6 +226,8 @@ func availableOutput(base, ext string) string {
 	}
 }
 
+// decodeH264FrameAt is retained for the lightweight in-app thumbnail cache.
+// User-triggered split and contact-sheet operations use the system FFmpeg.
 func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 	f, parsed, err := decodeMP4(path)
 	if err != nil {
@@ -331,7 +246,7 @@ func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 	}
 	stbl := track.Mdia.Minf.Stbl
 	if stbl.Stsd.AvcX == nil || stbl.Stsd.AvcX.AvcC == nil {
-		return nil, fmt.Errorf("contact sheet H.264 gerektiriyor")
+		return nil, fmt.Errorf("önizleme H.264 gerektiriyor")
 	}
 	target, err := stbl.Stts.GetSampleNrAtTime(uint64(seconds * float64(track.Mdia.Mdhd.Timescale)))
 	if err != nil {
@@ -357,8 +272,8 @@ func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 		if err := parsed.CopySampleData(&packet, f, track, n, n, workspace); err != nil {
 			return nil, err
 		}
-		frames, e := decoder.DecodeConfiguredAVCFrames(packet.Bytes())
-		if e == nil && len(frames) > 0 && n >= target {
+		frames, decodeErr := decoder.DecodeConfiguredAVCFrames(packet.Bytes())
+		if decodeErr == nil && len(frames) > 0 && n >= target {
 			return frames[len(frames)-1], nil
 		}
 	}
@@ -367,27 +282,4 @@ func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 		return frames[len(frames)-1], nil
 	}
 	return nil, fmt.Errorf("kare çözülemedi")
-}
-
-func frameImage(frame *goh264.Frame, outW, outH int) (image.Image, error) {
-	if frame.BitDepthLuma != 8 {
-		return nil, fmt.Errorf("yalnızca 8-bit kare destekleniyor")
-	}
-	w, h := frame.Width, frame.Height
-	source := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			planeX, planeY := x+frame.CropLeft, y+frame.CropTop
-			ci := (planeY/2)*frame.CStride + planeX/2
-			cb, cr := uint8(128), uint8(128)
-			if ci < len(frame.Cb) && ci < len(frame.Cr) {
-				cb, cr = frame.Cb[ci], frame.Cr[ci]
-			}
-			r, g, b := color.YCbCrToRGB(frame.Y[planeY*frame.YStride+planeX], cb, cr)
-			source.SetRGBA(x, y, color.RGBA{r, g, b, 255})
-		}
-	}
-	destination := image.NewRGBA(image.Rect(0, 0, outW, outH))
-	xdraw.CatmullRom.Scale(destination, destination.Bounds(), source, source.Bounds(), draw.Src, nil)
-	return destination, nil
 }

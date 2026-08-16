@@ -36,7 +36,7 @@ const sheetSpacing = computed(() => duration.value > 0 ? duration.value / (Numbe
 function notify(type, title, detail = '') {
   window.clearTimeout(noticeTimer)
   notice.value = { type, title, detail }
-  if (type !== 'progress') noticeTimer = window.setTimeout(() => { notice.value = null }, type === 'error' ? 7000 : 5000)
+  if (type !== 'progress') noticeTimer = window.setTimeout(() => { notice.value = null }, type === 'error' ? 15000 : 5000)
 }
 
 function fmt(value) {
@@ -76,7 +76,7 @@ async function splitCurrent() {
   const splitAt = video.value?.currentTime ?? current.value
   if (splitAt <= 0 || splitAt >= duration.value) { notify('error', 'Bölme noktası geçersiz', 'İmleci videonun başlangıç ve bitişi arasına getirin.'); return }
   processing.value = 'split'
-  notify('progress', 'Video bölünüyor', `${fmt(splitAt)} noktasındaki anahtar kare hazırlanıyor…`)
+  notify('progress', 'Video bölünüyor', `${fmt(splitAt)} noktasına en yakın anahtar kare hazırlanıyor…`)
   await nextTick()
   try {
     const result = await SplitVideo(item.value.path, splitAt)
@@ -235,7 +235,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
       <header class="topbar">
         <div><span class="eyebrow">ŞİMDİ OYNATILIYOR</span><strong :title="item?.name">{{ item?.name || 'Bir video seçin' }}</strong></div>
         <div class="topbar-actions">
-          <button class="icon-btn operation-btn" :class="{ processing: processing === 'split' }" aria-label="Geçerli noktadan H.264 videoyu böl" title="H.264 MP4/MOV videoyu geçerli noktadan ikiye böl" @click="splitCurrent"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /></button>
+          <button class="icon-btn operation-btn" :class="{ processing: processing === 'split' }" aria-label="Videoyu geçerli noktadan böl" title="FFmpeg ile videoyu geçerli noktaya en yakın anahtar kareden ikiye böl" @click="splitCurrent"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" aria-label="Contact sheet oluştur" title="Belirli aralıklarla contact sheet oluştur" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
           <button class="icon-btn danger" :disabled="!item" aria-label="Videoyu diskten sil" title="Videoyu sil (⌘⌫)" @click="deleteCurrent"><Trash2 :size="19" /></button>
           <button class="icon-btn" :class="{ active: showQueue }" aria-label="Oynatma listesini göster" title="Oynatma listesini göster" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
@@ -298,12 +298,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
     </aside>
 
     <Transition name="notice">
-      <button v-if="notice" class="operation-notice" :class="notice.type" role="status" aria-live="polite" @click="notice = null">
+      <div v-if="notice" class="operation-notice" :class="notice.type" role="status" aria-live="polite">
         <LoaderCircle v-if="notice.type === 'progress'" class="spin" :size="22" />
         <CheckCircle2 v-else-if="notice.type === 'success'" :size="22" />
         <AlertCircle v-else :size="22" />
-        <span><strong>{{ notice.title }}</strong><small>{{ notice.detail }}</small></span><X :size="15" />
-      </button>
+        <span><strong>{{ notice.title }}</strong><small>{{ notice.detail }}</small></span><button class="notice-close" aria-label="Bildirimi kapat" @click="notice = null"><X :size="15" /></button>
+      </div>
     </Transition>
 
     <div v-if="showSheetDialog" class="shortcut-modal sheet-modal" role="dialog" aria-modal="true" aria-label="Contact sheet ayarları" @click.self="showSheetDialog = false">

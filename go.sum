@@ -32,8 +32,6 @@ github.com/thesyncim/goh264 v0.0.0-20260714003229-dfe2249dbdb4 h1:avVR3HxrVBC67N
 github.com/thesyncim/goh264 v0.0.0-20260714003229-dfe2249dbdb4/go.mod h1:/4BzjdI5P2Yf5ZG1ZuDRucRQAiKmXhAw/bj58zIO+Ec=
 github.com/wailsapp/wails/v3 v3.0.0-beta.8 h1:r5d+5ERZ6TYI/OPJnqq91Ugux+TkfplCURUi/+6vA/Q=
 github.com/wailsapp/wails/v3 v3.0.0-beta.8/go.mod h1:A/OaL1mXOnwWynTJv4rZU89Wbk5q3rtq3C3qkx4rRN0=
-golang.org/x/image v0.41.0 h1:8wS72eGJMJaBxK6okTzd4WaXumUlTVlb753MlsSvTCo=
-golang.org/x/image v0.41.0/go.mod h1:uIc348UZMSvS5Z65CVZ7iDPaNobNFEPeJ4kbqTOszmA=
 golang.org/x/sys v0.0.0-20200810151505-1b9f1253b3ed/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.1.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=

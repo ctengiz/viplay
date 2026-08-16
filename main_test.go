@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +17,61 @@ func TestMediaServerRejectsUnauthorisedFile(t *testing.T) {
 	server.ServeHTTP(res, req)
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("expected %d, got %d", http.StatusForbidden, res.Code)
+	}
+}
+
+func TestMissingFFmpegHasInstallInstructions(t *testing.T) {
+	err := missingMediaToolError("ffmpeg")
+	message := err.Error()
+	for _, expected := range []string{"FFmpeg bulunamadı", "brew install ffmpeg", "winget install Gyan.FFmpeg"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("error %q does not contain %q", message, expected)
+		}
+	}
+}
+
+func TestMissingFFprobeExplainsIncompleteInstall(t *testing.T) {
+	err := missingMediaToolError("ffprobe")
+	if !strings.Contains(err.Error(), "ffprobe bulunamadı") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFFmpegFilterDetection(t *testing.T) {
+	if !ffmpegFilterListed(" .. drawtext          V->V       Draw text on top of video frames.", "drawtext") {
+		t.Fatal("expected drawtext filter to be detected")
+	}
+	if ffmpegFilterListed(" .. tile              V->V       Tile frames.", "drawtext") {
+		t.Fatal("unexpected drawtext filter detection")
+	}
+}
+
+func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg")
+	if err != nil {
+		t.Skip("FFmpeg is not installed")
+	}
+	if _, err := requireMediaTool("ffprobe"); err != nil {
+		t.Skip("ffprobe is not installed")
+	}
+	input := filepath.Join(t.TempDir(), "contact-sheet-source.mp4")
+	if output, err := exec.Command(ffmpeg,
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=3:size=320x180:rate=12",
+		"-c:v", "mpeg4", input,
+	).CombinedOutput(); err != nil {
+		t.Fatalf("test video creation failed: %v: %s", err, output)
+	}
+	output, err := extractContactSheet(input, 4, 160, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
+		t.Fatal("contact sheet is not a JPEG image")
 	}
 }
 
