@@ -15,6 +15,8 @@ Update this file only when a decision changes. New entry format: `DNN · YYYY-MM
 - **D09 · 2026-08-17 · English is the default and fallback application locale.** The initial release supports English and Turkish, and the selected locale persists between sessions.
 - **D10 · 2026-08-17 · Every feature must ship with English and Turkish UI copy.** `locales/catalogs.json` is the single source for frontend and backend strings and is embedded in the Go binary. Vue loads its active catalog from Wails before mounting. Additional languages are added only in that shared file.
 - **D11 · 2026-08-17 · Repository prose is English-only.** Markdown, code comments, identifiers, and developer documentation remain English even when user instructions are Turkish; Turkish is valid inside translation catalogs.
+- **D12 · 2026-08-18 · Deletion prefers the native macOS Trash and falls back to permanent removal.** Files on mounted volumes use that volume's `.Trashes` directory when available; unsupported or read-only Trash locations must not prevent deletion.
+- **D13 · 2026-08-18 · Multi-split uses one FFmpeg segment operation for all markers.** Outputs retain the source container, use stream-copy, and follow the existing nearest-keyframe behavior without quality loss.
 
 ## Superseding a decision
 

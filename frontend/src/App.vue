@@ -1,8 +1,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Film, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
+import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Window } from '@wailsio/runtime'
-import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SplitVideo } from '../bindings/viplay/app'
+import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SplitVideo, SplitVideoAtMarkers } from '../bindings/viplay/app'
 import { loadLocale, locale, locales, t } from './i18n'
 
 const video = ref(null)
@@ -20,15 +20,18 @@ const showQueue = ref(true)
 const subtitle = ref(null)
 const showShortcuts = ref(false)
 const showSheetDialog = ref(false)
+const showDeleteDialog = ref(false)
 const sheetFrameCount = ref(12)
 const sheetImageWidth = ref(320)
 const mediaInfo = ref(null)
 const libraryView = ref('folder')
 const processing = ref('')
 const notice = ref(null)
+const splitMarkers = ref([])
 let noticeTimer
 const item = computed(() => queue.value[index.value])
 const progress = computed(() => `${duration.value ? current.value / duration.value * 100 : 0}%`)
+const markerPositions = computed(() => splitMarkers.value.map(seconds => ({ seconds, left: `${seconds / duration.value * 100}%` })))
 const volumeProgress = computed(() => `${volume.value * 100}%`)
 const speeds = [.5, .75, 1, 1.25, 1.5, 2]
 const sheetSizes = computed(() => [
@@ -87,6 +90,45 @@ async function splitCurrent() {
   try {
     const result = await SplitVideo(item.value.path, splitAt)
     notify('success', t('split.successTitle'), `${fmt(result.splitTime)} · ${result.firstPath} · ${result.secondPath}`)
+    if (libraryView.value === 'folder') {
+      const activePath = item.value.path
+      queue.value = await DirectoryVideos(activePath)
+      index.value = queue.value.findIndex(entry => entry.path === activePath)
+    }
+  } catch (error) { notify('error', t('split.errorTitle'), String(error)) }
+  finally { processing.value = '' }
+}
+
+function toggleSplitMarker() {
+  if (!item.value || !duration.value) { notify('error', t('error.noVideoTitle'), t('error.noVideoSplit')); return }
+  if (processing.value) return
+  const seconds = video.value?.currentTime ?? current.value
+  if (seconds <= .05 || seconds >= duration.value - .05) { notify('error', t('error.invalidSplitTitle'), t('error.invalidSplit')); return }
+  const existing = splitMarkers.value.findIndex(marker => Math.abs(marker - seconds) < .25)
+  if (existing >= 0) {
+    splitMarkers.value.splice(existing, 1)
+    return
+  }
+  if (splitMarkers.value.length >= 100) { notify('error', t('markers.limitTitle'), t('markers.limit')); return }
+  splitMarkers.value = [...splitMarkers.value, seconds].sort((a, b) => a - b)
+}
+
+function removeSplitMarker(seconds) {
+  splitMarkers.value = splitMarkers.value.filter(marker => marker !== seconds)
+}
+
+async function splitAtMarkers() {
+  if (!splitMarkers.value.length) return splitCurrent()
+  if (!item.value || processing.value) return
+  if (video.value && !video.value.paused) video.value.pause()
+  const markers = [...splitMarkers.value]
+  processing.value = 'split'
+  notify('progress', t('multiSplit.progressTitle'), t('multiSplit.progress', { count: markers.length, parts: markers.length + 1 }))
+  await nextTick()
+  try {
+    const result = await SplitVideoAtMarkers(item.value.path, markers)
+    splitMarkers.value = []
+    notify('success', t('multiSplit.successTitle'), t('multiSplit.success', { count: result.paths.length }))
     if (libraryView.value === 'folder') {
       const activePath = item.value.path
       queue.value = await DirectoryVideos(activePath)
@@ -169,17 +211,28 @@ async function navigateDirectory(direction) {
   select(target, true)
 }
 
+function requestDelete() {
+  if (!item.value) { notify('error', t('error.noVideoTitle'), t('delete.noVideo')); return }
+  if (processing.value) { notify('error', t('delete.busyTitle'), t('delete.busy')); return }
+  showDeleteDialog.value = true
+}
+
 async function deleteCurrent() {
-  if (!item.value) return
+  if (!item.value || processing.value) return
   const deleting = item.value
-  if (!window.confirm(t('delete.confirm', { name: deleting.name }))) return
-  await DeleteVideo(deleting.path)
-  queue.value.splice(index.value, 1)
-  if (index.value >= queue.value.length) index.value = Math.max(0, queue.value.length - 1)
-  current.value = 0
-  playing.value = false
-  subtitle.value = null
-  mediaInfo.value = null
+  showDeleteDialog.value = false
+  processing.value = 'delete'
+  try {
+    await DeleteVideo(deleting.path)
+    queue.value.splice(index.value, 1)
+    if (index.value >= queue.value.length) index.value = Math.max(0, queue.value.length - 1)
+    current.value = 0
+    playing.value = false
+    subtitle.value = null
+    mediaInfo.value = null
+    notify('success', t('delete.successTitle'), deleting.name)
+  } catch (error) { notify('error', t('delete.errorTitle'), String(error)) }
+  finally { processing.value = '' }
 }
 
 function loaded(event) {
@@ -190,14 +243,17 @@ function loaded(event) {
 }
 
 function onKey(event) {
+  if (event.key === 'Escape' && showDeleteDialog.value) { showDeleteDialog.value = false; return }
+  if (!event.repeat && event.key === 'Enter' && showDeleteDialog.value) { event.preventDefault(); deleteCurrent(); return }
   if (event.key === 'Escape' && showSheetDialog.value) { showSheetDialog.value = false; return }
   if (event.key === 'Escape' && showShortcuts.value) { showShortcuts.value = false; return }
-  if (showShortcuts.value) return
+  if (showDeleteDialog.value || showShortcuts.value) return
   if (['INPUT', 'BUTTON'].includes(document.activeElement?.tagName) && event.code === 'Space') return
   const player = video.value
   if (event.metaKey && event.code === 'ArrowRight') { event.preventDefault(); navigateDirectory(1); return }
   if (event.metaKey && event.code === 'ArrowLeft') { event.preventDefault(); navigateDirectory(-1); return }
-  if (event.metaKey && event.code === 'Backspace') { event.preventDefault(); deleteCurrent(); return }
+  if (!event.repeat && (event.code === 'Delete' || (event.metaKey && event.code === 'Backspace'))) { event.preventDefault(); requestDelete(); return }
+  if (!event.repeat && event.code === 'KeyB' && player) { event.preventDefault(); toggleSplitMarker(); return }
   if (event.code === 'Space' && player) { event.preventDefault(); player.paused ? player.play() : player.pause() }
   if (event.code === 'ArrowRight' && player) player.currentTime = Math.min(player.duration || 0, player.currentTime + seekStep.value)
   if (event.code === 'ArrowLeft' && player) player.currentTime = Math.max(0, player.currentTime - seekStep.value)
@@ -207,7 +263,10 @@ function onKey(event) {
 
 watch(speed, value => { if (video.value) video.value.playbackRate = value })
 watch(volume, value => { if (video.value) video.value.volume = value })
-watch(item, async value => { mediaInfo.value = value ? await ProbeMedia(value.path) : null }, { immediate: true })
+watch(item, async value => {
+  splitMarkers.value = []
+  mediaInfo.value = value ? await ProbeMedia(value.path) : null
+}, { immediate: true })
 async function changeLanguage(event) {
   await loadLocale(event.target.value)
 }
@@ -247,9 +306,9 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
         <div><span class="eyebrow">{{ t('nowPlaying') }}</span><strong :title="item?.name">{{ item?.name || t('selectVideo') }}</strong></div>
         <div class="topbar-actions">
           <label class="language-picker" :title="t('language.label')"><Languages :size="16" /><select :value="locale" :aria-label="t('language.label')" @change="changeLanguage"><option v-for="language in locales" :key="language.code" :value="language.code">{{ language.label }}</option></select><ChevronDown :size="12" /></label>
-          <button class="icon-btn operation-btn" :class="{ processing: processing === 'split' }" :aria-label="t('actions.split')" :title="t('actions.splitTitle')" @click="splitCurrent"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /></button>
+          <button class="icon-btn operation-btn" :class="{ processing: processing === 'split', marked: splitMarkers.length }" :aria-label="splitMarkers.length ? t('actions.multiSplit', { count: splitMarkers.length }) : t('actions.split')" :title="splitMarkers.length ? t('actions.multiSplitTitle', { count: splitMarkers.length }) : t('actions.splitTitle')" @click="splitAtMarkers"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /><span v-if="splitMarkers.length" class="marker-count">{{ splitMarkers.length }}</span></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" :aria-label="t('actions.contactSheet')" :title="t('actions.contactSheetTitle')" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
-          <button class="icon-btn danger" :disabled="!item" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="deleteCurrent"><Trash2 :size="19" /></button>
+          <button class="icon-btn danger" :disabled="processing === 'delete'" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="requestDelete"><Trash2 :size="19" /></button>
           <button class="icon-btn" :class="{ active: showQueue }" :aria-label="t('actions.showQueue')" :title="t('actions.showQueue')" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
         </div>
       </header>
@@ -271,7 +330,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
       </div>
 
       <div class="controls">
-        <div class="timeline-row"><span>{{ fmt(current) }}</span><input :aria-label="t('player.progress')" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @input="seek"><span>{{ fmt(duration) }}</span></div>
+        <div class="timeline-row"><span>{{ fmt(current) }}</span><div class="timeline-track"><input :aria-label="t('player.progress')" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @input="seek"><button v-for="marker in markerPositions" :key="marker.seconds" class="split-marker" :style="{ left: marker.left }" :aria-label="t('markers.removeAt', { time: fmt(marker.seconds) })" :title="t('markers.removeAt', { time: fmt(marker.seconds) })" @click="removeSplitMarker(marker.seconds)"><span>{{ fmt(marker.seconds) }}</span></button></div><span>{{ fmt(duration) }}</span></div>
         <div class="control-row">
           <div class="volume-group">
             <button class="icon-btn" :aria-label="muted ? t('player.unmute') : t('player.mute')" @click="muted = !muted"><VolumeX v-if="muted || volume === 0" :size="20" /><Volume2 v-else :size="20" /></button>
@@ -285,6 +344,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
             <button class="icon-btn" :aria-label="t('player.seekForward', { seconds: seekStep })" @click="seekBy(seekStep)"><RotateCw :size="19" /></button>
           </div>
           <div class="tools">
+            <button class="tool marker-tool" :class="{ active: splitMarkers.length }" :disabled="!item || processing" :title="t('markers.addTitle')" @click="toggleSplitMarker"><Flag :size="18" /><span>{{ splitMarkers.length ? t('markers.count', { count: splitMarkers.length }) : t('markers.add') }}</span><kbd>B</kbd></button>
             <label class="seek-step" :title="t('player.seekDuration')"><input v-model.number="seekStep" :aria-label="t('player.seekSeconds')" type="number" min="1" max="300" step="1" @change="normaliseSeekStep"><span>{{ t('player.secondsShort') }}</span></label>
             <button class="tool" :class="{ active: subtitle }" @click="openSubtitle"><Captions :size="20" /><span>{{ t('player.subtitles') }}</span></button>
             <label class="speed"><Gauge :size="19" /><select v-model.number="speed" :aria-label="t('player.speed')"><option v-for="value in speeds" :key="value" :value="value">{{ value }}×</option></select><ChevronDown :size="14" /></label>
@@ -331,14 +391,23 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
       </section>
     </div>
 
+    <div v-if="showDeleteDialog" class="shortcut-modal sheet-modal delete-modal" role="dialog" aria-modal="true" :aria-label="t('delete.title')" @click.self="showDeleteDialog = false">
+      <section>
+        <header><div><span>{{ t('delete.label') }}</span><strong>{{ t('delete.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showDeleteDialog = false"><X :size="20" /></button></header>
+        <p>{{ t('delete.confirm', { name: item?.name }) }}</p>
+        <footer><button class="cancel" @click="showDeleteDialog = false">{{ t('delete.cancel') }}</button><button class="confirm danger" autofocus @click="deleteCurrent"><Trash2 :size="17" />{{ t('delete.action') }}</button></footer>
+      </section>
+    </div>
+
     <div v-if="showShortcuts" class="shortcut-modal" role="dialog" aria-modal="true" :aria-label="t('shortcuts.open')" @click.self="showShortcuts = false">
       <section>
         <header><div><span>{{ t('shortcuts.keyboard') }}</span><strong>{{ t('shortcuts.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showShortcuts = false"><X :size="20" /></button></header>
         <dl>
           <div><dt>{{ t('shortcuts.playPause') }}</dt><dd><kbd>Space</kbd></dd></div>
           <div><dt>{{ t('shortcuts.seek', { seconds: seekStep }) }}</dt><dd><kbd>←</kbd><kbd>→</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.splitMarker') }}</dt><dd><kbd>B</kbd></dd></div>
           <div><dt>{{ t('shortcuts.previousNext') }}</dt><dd><kbd>⌘←</kbd><kbd>⌘→</kbd></dd></div>
-          <div><dt>{{ t('shortcuts.delete') }}</dt><dd><kbd>⌘⌫</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.delete') }}</dt><dd><kbd>Del</kbd><kbd>⌘⌫</kbd></dd></div>
           <div><dt>{{ t('shortcuts.fullscreen') }}</dt><dd><kbd>F</kbd></dd></div>
           <div><dt>{{ t('shortcuts.mute') }}</dt><dd><kbd>M</kbd></dd></div>
         </dl>

@@ -44,7 +44,7 @@ Every user-facing feature must include matching English and Turkish translation 
 - Multi-file local playback queue
 - Play/pause, seeking, previous/next navigation, playback speed, volume, and fullscreen
 - WebVTT subtitle loading
-- Keyboard shortcuts: `Space`, `←`, `→`, `F`, `M`, `⌘←` / `⌘→` for folder navigation, and `⌘⌫` for disk deletion
+- Keyboard shortcuts: `Space`, `←`, `→`, `F`, `M`, `⌘←` / `⌘→` for folder navigation, and `Del` / `⌘⌫` for disk deletion
 - Lossless FFmpeg stream-copy splitting at keyframes
 - FFmpeg contact-sheet generation
 - Video/audio codec, container, dimensions, FPS, and file-size information

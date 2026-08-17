@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -94,6 +96,92 @@ func splitMP4(path string, seconds float64, locale string) (SplitResult, error) 
 		return SplitResult{}, err
 	}
 	return SplitResult{FirstPath: first, SecondPath: second, SplitTime: actual}, nil
+}
+
+func splitMP4AtMarkers(path string, points []float64, locale string) (MultiSplitResult, error) {
+	ffmpeg, err := requireMediaTool("ffmpeg", locale)
+	if err != nil {
+		return MultiSplitResult{}, err
+	}
+	duration, err := mediaDuration(path, locale)
+	if err != nil {
+		return MultiSplitResult{}, err
+	}
+	markers, err := normaliseSplitMarkers(points, duration, locale)
+	if err != nil {
+		return MultiSplitResult{}, err
+	}
+
+	dir := filepath.Dir(path)
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		ext = ".mp4"
+	}
+	base := strings.TrimSuffix(path, filepath.Ext(path))
+	tempDir, err := os.MkdirTemp(dir, ".viplay-multi-split-")
+	if err != nil {
+		return MultiSplitResult{}, err
+	}
+	defer os.RemoveAll(tempDir)
+	pattern := filepath.Join(tempDir, "part_%d"+ext)
+	formatted := make([]string, len(markers))
+	for i, marker := range markers {
+		formatted[i] = formatSeconds(marker)
+	}
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-i", path,
+		"-map", "0:v:0", "-map", "0:a?", "-map", "0:s?",
+		"-c", "copy",
+		"-f", "segment", "-segment_times", strings.Join(formatted, ","),
+		"-reset_timestamps", "1", pattern,
+	}
+	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+		return MultiSplitResult{}, mediaToolError(translate(locale, "error.splitFailed"), runErr, output)
+	}
+
+	paths := make([]string, len(markers)+1)
+	actualTimes := make([]float64, 0, len(markers))
+	elapsed := 0.0
+	for i := range paths {
+		tempPath := filepath.Join(tempDir, fmt.Sprintf("part_%d%s", i, ext))
+		if _, statErr := os.Stat(tempPath); statErr != nil {
+			return MultiSplitResult{}, fmt.Errorf("%s", translate(locale, "error.splitPartMissing", i+1))
+		}
+		partDuration, durationErr := mediaDuration(tempPath, locale)
+		if durationErr != nil {
+			return MultiSplitResult{}, durationErr
+		}
+		elapsed += partDuration
+		if i < len(markers) {
+			actualTimes = append(actualTimes, elapsed)
+		}
+		paths[i] = availableOutput(fmt.Sprintf("%s_part%d", base, i+1), ext)
+	}
+	for i, outputPath := range paths {
+		tempPath := filepath.Join(tempDir, fmt.Sprintf("part_%d%s", i, ext))
+		if renameErr := os.Rename(tempPath, outputPath); renameErr != nil {
+			for _, moved := range paths[:i] {
+				_ = os.Remove(moved)
+			}
+			return MultiSplitResult{}, renameErr
+		}
+	}
+	return MultiSplitResult{Paths: paths, SplitTimes: actualTimes}, nil
+}
+
+func normaliseSplitMarkers(points []float64, duration float64, locale string) ([]float64, error) {
+	if len(points) < 1 || len(points) > 100 {
+		return nil, fmt.Errorf("%s", translate(locale, "error.invalidMarkerCount"))
+	}
+	markers := append([]float64(nil), points...)
+	sort.Float64s(markers)
+	for i, marker := range markers {
+		if math.IsNaN(marker) || math.IsInf(marker, 0) || marker <= .05 || marker >= duration-.05 || (i > 0 && marker-markers[i-1] < .05) {
+			return nil, fmt.Errorf("%s", translate(locale, "error.invalidSplitMarkers"))
+		}
+	}
+	return markers, nil
 }
 
 type ffprobeResult struct {

@@ -11,5 +11,6 @@ export {
     LocalizationPayload,
     MediaInfo,
     MediaItem,
+    MultiSplitResult,
     SplitResult
 } from "./models.js";

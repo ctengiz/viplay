@@ -63,9 +63,16 @@ export function SplitVideo(path: string, seconds: number): $CancellablePromise<$
     });
 }
 
+export function SplitVideoAtMarkers(path: string, seconds: number[]): $CancellablePromise<$models.MultiSplitResult> {
+    return $Call.ByID(1021854198, path, seconds).then(($result: any) => {
+        return $$createType5($result);
+    });
+}
+
 // Private type creation functions
 const $$createType0 = $models.MediaItem.createFrom;
 const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $models.LocalizationPayload.createFrom;
 const $$createType3 = $models.MediaInfo.createFrom;
 const $$createType4 = $models.SplitResult.createFrom;
+const $$createType5 = $models.MultiSplitResult.createFrom;

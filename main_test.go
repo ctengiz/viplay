@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,6 +73,50 @@ func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
 	}
 	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
 		t.Fatal("contact sheet is not a JPEG image")
+	}
+}
+
+func TestNormaliseSplitMarkersSortsAndValidates(t *testing.T) {
+	markers, err := normaliseSplitMarkers([]float64{7, 2, 4}, 10, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []float64{2, 4, 7}
+	for i := range want {
+		if markers[i] != want[i] {
+			t.Fatalf("marker %d = %v, want %v", i, markers[i], want[i])
+		}
+	}
+	if _, err := normaliseSplitMarkers([]float64{2, 2}, 10, "en"); err == nil {
+		t.Fatal("duplicate markers were accepted")
+	}
+}
+
+func TestMultiSplitWithSystemFFmpeg(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	input := filepath.Join(t.TempDir(), "multi.mp4")
+	command := exec.Command(ffmpeg,
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=5:size=320x180:rate=12",
+		"-c:v", "libx264", "-g", "12", "-keyint_min", "12", "-sc_threshold", "0", input,
+	)
+	if output, runErr := command.CombinedOutput(); runErr != nil {
+		t.Fatalf("create synthetic video: %v: %s", runErr, output)
+	}
+	result, err := splitMP4AtMarkers(input, []float64{1.5, 3.5}, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Paths) != 3 || len(result.SplitTimes) != 2 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	for _, path := range result.Paths {
+		if info, statErr := os.Stat(path); statErr != nil || info.Size() == 0 {
+			t.Fatalf("missing split output %q: %v", path, statErr)
+		}
 	}
 }
 
@@ -152,6 +197,20 @@ func TestDeleteVideoRemovesAuthorisedFile(t *testing.T) {
 	}
 	if server.isAllowed(path) {
 		t.Fatal("deleted file remained authorised")
+	}
+}
+
+func TestDeleteFileFallsBackToPermanentRemoval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mounted-video.mp4")
+	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	trashErr := errors.New("trash is unavailable")
+	if err := deleteFileWithTrash(path, func(string) error { return trashErr }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("file remained after Trash fallback")
 	}
 }
 

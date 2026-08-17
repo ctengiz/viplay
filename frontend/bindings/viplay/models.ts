@@ -161,6 +161,39 @@ export class MediaItem {
     }
 }
 
+export class MultiSplitResult {
+    "paths": string[];
+    "splitTimes": number[];
+
+    /** Creates a new MultiSplitResult instance. */
+    constructor($$source: Partial<MultiSplitResult> = {}) {
+        if (!("paths" in $$source)) {
+            this["paths"] = [];
+        }
+        if (!("splitTimes" in $$source)) {
+            this["splitTimes"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new MultiSplitResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): MultiSplitResult {
+        const $$createField0_0 = $$createType3;
+        const $$createField1_0 = $$createType4;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("paths" in $$parsedSource) {
+            $$parsedSource["paths"] = $$createField0_0($$parsedSource["paths"]);
+        }
+        if ("splitTimes" in $$parsedSource) {
+            $$parsedSource["splitTimes"] = $$createField1_0($$parsedSource["splitTimes"]);
+        }
+        return new MultiSplitResult($$parsedSource as Partial<MultiSplitResult>);
+    }
+}
+
 export class SplitResult {
     "firstPath": string;
     "secondPath": string;
@@ -194,3 +227,5 @@ export class SplitResult {
 const $$createType0 = LocaleOption.createFrom;
 const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $Create.Map($Create.Any, $Create.Any);
+const $$createType3 = $Create.Array($Create.Any);
+const $$createType4 = $Create.Array($Create.Any);
