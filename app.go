@@ -50,7 +50,9 @@ func NewApp(server *mediaServer) *App {
 	return app
 }
 
-func (a *App) SetLocale(locale string) string { return a.locale.set(locale) }
+func (a *App) GetLocalization(locale string) LocalizationPayload {
+	return localizationPayload(a.locale.set(locale))
+}
 
 func (a *App) tr(key string, args ...any) string {
 	return translate(a.locale.get(), key, args...)

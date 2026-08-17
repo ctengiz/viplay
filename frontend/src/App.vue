@@ -2,8 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Film, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Window } from '@wailsio/runtime'
-import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SetLocale, SplitVideo } from '../bindings/viplay/app'
-import { locale, locales, setLocale, t } from './i18n'
+import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SplitVideo } from '../bindings/viplay/app'
+import { loadLocale, locale, locales, t } from './i18n'
 
 const video = ref(null)
 const queue = ref([])
@@ -209,12 +209,10 @@ watch(speed, value => { if (video.value) video.value.playbackRate = value })
 watch(volume, value => { if (video.value) video.value.volume = value })
 watch(item, async value => { mediaInfo.value = value ? await ProbeMedia(value.path) : null }, { immediate: true })
 async function changeLanguage(event) {
-  const selected = setLocale(event.target.value)
-  try { await SetLocale(selected) } catch { /* The backend locale is synced when Wails is available. */ }
+  await loadLocale(event.target.value)
 }
 onMounted(() => {
   window.addEventListener('keydown', onKey)
-  SetLocale(locale.value).catch(() => {})
 })
 onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.clearTimeout(noticeTimer) })
 </script>

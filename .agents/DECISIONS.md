@@ -13,10 +13,9 @@ Update this file only when a decision changes. New entry format: `DNN · YYYY-MM
 - **D07 · 2026-08-17 · The pure Go decoder remains only for thumbnails.** User-triggered split and contact-sheet operations belong to FFmpeg.
 - **D08 · 2026-08-17 · Tests and a Wails build are required after every completed code change.** Sandbox runs use `/private/tmp/viplay-go-build` as the Go cache.
 - **D09 · 2026-08-17 · English is the default and fallback application locale.** The initial release supports English and Turkish, and the selected locale persists between sessions.
-- **D10 · 2026-08-17 · Every feature must ship with English and Turkish UI copy.** User-facing strings live in locale catalogs, never inline in components or operations. Additional languages are added through a catalog and locale-list entry.
+- **D10 · 2026-08-17 · Every feature must ship with English and Turkish UI copy.** `locales/catalogs.json` is the single source for frontend and backend strings and is embedded in the Go binary. Vue loads its active catalog from Wails before mounting. Additional languages are added only in that shared file.
 - **D11 · 2026-08-17 · Repository prose is English-only.** Markdown, code comments, identifiers, and developer documentation remain English even when user instructions are Turkish; Turkish is valid inside translation catalogs.
 
 ## Superseding a decision
 
 Do not delete an old entry. Mark it with `Superseded by: DNN` and add the replacement as a new numbered decision so future sessions retain the rationale.
-

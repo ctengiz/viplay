@@ -5,6 +5,72 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+export class LocaleOption {
+    "code": string;
+    "label": string;
+
+    /** Creates a new LocaleOption instance. */
+    constructor($$source: Partial<LocaleOption> = {}) {
+        if (!("code" in $$source)) {
+            this["code"] = "";
+        }
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LocaleOption instance from a string or object.
+     */
+    static createFrom($$source: any = {}): LocaleOption {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LocaleOption($$parsedSource as Partial<LocaleOption>);
+    }
+}
+
+export class LocalizationPayload {
+    "locale": string;
+    "defaultLocale": string;
+    "locales": LocaleOption[];
+    "messages": { [_ in string]?: string };
+
+    /** Creates a new LocalizationPayload instance. */
+    constructor($$source: Partial<LocalizationPayload> = {}) {
+        if (!("locale" in $$source)) {
+            this["locale"] = "";
+        }
+        if (!("defaultLocale" in $$source)) {
+            this["defaultLocale"] = "";
+        }
+        if (!("locales" in $$source)) {
+            this["locales"] = [];
+        }
+        if (!("messages" in $$source)) {
+            this["messages"] = {};
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LocalizationPayload instance from a string or object.
+     */
+    static createFrom($$source: any = {}): LocalizationPayload {
+        const $$createField2_0 = $$createType1;
+        const $$createField3_0 = $$createType2;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("locales" in $$parsedSource) {
+            $$parsedSource["locales"] = $$createField2_0($$parsedSource["locales"]);
+        }
+        if ("messages" in $$parsedSource) {
+            $$parsedSource["messages"] = $$createField3_0($$parsedSource["messages"]);
+        }
+        return new LocalizationPayload($$parsedSource as Partial<LocalizationPayload>);
+    }
+}
+
 export class MediaInfo {
     "container": string;
     "videoCodec": string;
@@ -123,3 +189,8 @@ export class SplitResult {
         return new SplitResult($$parsedSource as Partial<SplitResult>);
     }
 }
+
+// Private type creation functions
+const $$createType0 = LocaleOption.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $Create.Map($Create.Any, $Create.Any);

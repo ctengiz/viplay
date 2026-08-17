@@ -75,32 +75,25 @@ func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
 	}
 }
 
-func TestBackendLocalesHaveMatchingKeys(t *testing.T) {
-	for key := range backendMessages["en"] {
-		if backendMessages["tr"][key] == "" {
-			t.Errorf("Turkish catalog is missing %q", key)
-		}
-	}
-	for key := range backendMessages["tr"] {
-		if backendMessages["en"][key] == "" {
-			t.Errorf("English catalog is missing %q", key)
-		}
+func TestEmbeddedLocalizationCatalogIsValid(t *testing.T) {
+	if err := validateLocalization(localizationData); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestUnsupportedLocaleFallsBackToEnglish(t *testing.T) {
-	if got := translate("de", "error.invalidSplitPoint"); got != backendMessages["en"]["error.invalidSplitPoint"] {
+	if got := translate("de", "error.invalidSplitPoint"); got != localizationData.Messages["en"]["error.invalidSplitPoint"] {
 		t.Fatalf("unexpected fallback: %q", got)
 	}
 }
 
 func TestAppLocaleSelection(t *testing.T) {
 	app := NewApp(newMediaServer())
-	if got := app.SetLocale("tr"); got != "tr" || app.tr("dialog.openVideo") != backendMessages["tr"]["dialog.openVideo"] {
-		t.Fatalf("Turkish locale was not applied: %q", got)
+	if payload := app.GetLocalization("tr"); payload.Locale != "tr" || payload.Messages["library.title"] == "" || app.tr("dialog.openVideo") != localizationData.Messages["tr"]["dialog.openVideo"] {
+		t.Fatalf("Turkish locale was not applied: %#v", payload)
 	}
-	if got := app.SetLocale("unsupported"); got != "en" || app.tr("dialog.openVideo") != backendMessages["en"]["dialog.openVideo"] {
-		t.Fatalf("unsupported locale did not fall back to English: %q", got)
+	if payload := app.GetLocalization("unsupported"); payload.Locale != "en" || app.tr("dialog.openVideo") != localizationData.Messages["en"]["dialog.openVideo"] {
+		t.Fatalf("unsupported locale did not fall back to English: %#v", payload)
 	}
 }
 

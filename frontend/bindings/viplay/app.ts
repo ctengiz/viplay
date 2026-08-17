@@ -23,6 +23,12 @@ export function ExtractContactSheet(path: string, frameCount: number, imageWidth
     return $Call.ByID(2202839665, path, frameCount, imageWidth);
 }
 
+export function GetLocalization(locale: string): $CancellablePromise<$models.LocalizationPayload> {
+    return $Call.ByID(1859751638, locale).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
 export function MarkPlayed(path: string): $CancellablePromise<void> {
     return $Call.ByID(180312699, path);
 }
@@ -41,7 +47,7 @@ export function OpenVideos(): $CancellablePromise<$models.MediaItem[]> {
 
 export function ProbeMedia(path: string): $CancellablePromise<$models.MediaInfo> {
     return $Call.ByID(614641911, path).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType3($result);
     });
 }
 
@@ -51,18 +57,15 @@ export function RecentVideos(): $CancellablePromise<$models.MediaItem[]> {
     });
 }
 
-export function SetLocale(locale: string): $CancellablePromise<string> {
-    return $Call.ByID(2991417501, locale);
-}
-
 export function SplitVideo(path: string, seconds: number): $CancellablePromise<$models.SplitResult> {
     return $Call.ByID(2078186822, path, seconds).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType4($result);
     });
 }
 
 // Private type creation functions
 const $$createType0 = $models.MediaItem.createFrom;
 const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.MediaInfo.createFrom;
-const $$createType3 = $models.SplitResult.createFrom;
+const $$createType2 = $models.LocalizationPayload.createFrom;
+const $$createType3 = $models.MediaInfo.createFrom;
+const $$createType4 = $models.SplitResult.createFrom;

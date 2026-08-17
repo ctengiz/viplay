@@ -1,235 +1,25 @@
 import { ref } from 'vue'
+import { GetLocalization } from '../bindings/viplay/app'
 
-export const locales = [
-  { code: 'en', label: 'English' },
-  { code: 'tr', label: 'Türkçe' },
-]
+export const locale = ref('en')
+export const locales = ref([])
+const messages = ref({})
 
-export const messages = {
-  en: {
-    'language.label': 'Language',
-    'library.title': 'Library',
-    'library.openVideo': 'Open video',
-    'library.allVideos': 'All videos',
-    'library.recent': 'Recently played',
-    'mediaInfo.title': 'Video information',
-    'mediaInfo.video': 'Video',
-    'mediaInfo.audio': 'Audio',
-    'mediaInfo.dimensions': 'Dimensions',
-    'mediaInfo.format': 'Format',
-    'mediaInfo.file': 'File',
-    'mediaInfo.unknown': 'Unknown',
-    'mediaInfo.empty': 'Technical information appears here when a video is selected.',
-    'shortcuts.open': 'Keyboard shortcuts',
-    'nowPlaying': 'NOW PLAYING',
-    'selectVideo': 'Select a video',
-    'actions.split': 'Split video at the current position',
-    'actions.splitTitle': 'Use FFmpeg to split at the nearest keyframe',
-    'actions.contactSheet': 'Create contact sheet',
-    'actions.contactSheetTitle': 'Create a contact sheet at regular intervals',
-    'actions.delete': 'Delete video from disk',
-    'actions.deleteTitle': 'Delete video (⌘⌫)',
-    'actions.showQueue': 'Show playlist',
-    'empty.title': 'The screen is ready.',
-    'empty.description': 'Choose a video from your computer to start watching.',
-    'empty.formats': 'MP4, MOV, WebM, and formats supported by your system',
-    'player.play': 'Play',
-    'player.pause': 'Pause',
-    'player.progress': 'Progress',
-    'player.unmute': 'Unmute',
-    'player.mute': 'Mute',
-    'player.volume': 'Volume',
-    'player.seekBack': '{seconds} seconds back',
-    'player.seekForward': '{seconds} seconds forward',
-    'player.previous': 'Previous',
-    'player.next': 'Next',
-    'player.seekDuration': 'Seek duration',
-    'player.seekSeconds': 'Seek seconds',
-    'player.secondsShort': 'sec',
-    'player.subtitles': 'Subtitles',
-    'player.speed': 'Playback speed',
-    'player.exitFullscreen': 'Exit fullscreen',
-    'player.fullscreen': 'Fullscreen',
-    'queue.playlist': 'Playlist',
-    'queue.upNext': 'Up next',
-    'queue.close': 'Close playlist',
-    'queue.localVideo': 'Local video',
-    'queue.empty': 'Your playlist is empty',
-    'queue.addVideo': 'Add video',
-    'queue.addMore': 'Add video to playlist',
-    'notice.close': 'Close notification',
-    'error.noVideoTitle': 'No video selected',
-    'error.noVideoSplit': 'Open a video before trying to split it.',
-    'error.invalidSplitTitle': 'Invalid split point',
-    'error.invalidSplit': 'Move the playhead between the beginning and end of the video.',
-    'split.progressTitle': 'Splitting video',
-    'split.progress': 'Preparing the nearest keyframe to {time}…',
-    'split.successTitle': 'Video split successfully',
-    'split.errorTitle': 'Video could not be split',
-    'error.noVideoSheet': 'Open a video before extracting frames.',
-    'error.frameCountTitle': 'Invalid frame count',
-    'error.frameCount': 'Enter a frame count between 1 and 60.',
-    'sheet.progressTitle': 'Preparing contact sheet',
-    'sheet.progress': '{count} frames · approximately every {seconds} seconds…',
-    'sheet.successTitle': 'Contact sheet created',
-    'sheet.errorTitle': 'Contact sheet could not be created',
-    'delete.confirm': 'Permanently delete “{name}” from your disk? This action cannot be undone.',
-    'sheet.settings': 'Contact sheet settings',
-    'sheet.extractor': 'IMAGE EXTRACTOR',
-    'sheet.create': 'Create contact sheet',
-    'sheet.description': 'Frames are distributed evenly across the video. Timestamps are added when supported by your FFmpeg installation.',
-    'sheet.frameCount': 'Frame count',
-    'sheet.maxFrames': 'Maximum 60',
-    'sheet.frames': 'frames',
-    'sheet.interval': 'Frame interval',
-    'sheet.automatic': 'Calculated automatically',
-    'sheet.seconds': '{seconds} seconds',
-    'sheet.imageSize': 'Image size',
-    'sheet.frameDimensions': 'Dimensions of each frame',
-    'sheet.cancel': 'Cancel',
-    'sheet.confirm': 'Create',
-    'sheet.size.small': 'Small · 240×135',
-    'sheet.size.medium': 'Medium · 320×180',
-    'sheet.size.large': 'Large · 480×270',
-    'sheet.size.xlarge': 'Extra large · 640×360',
-    'common.close': 'Close',
-    'shortcuts.keyboard': 'KEYBOARD',
-    'shortcuts.title': 'Shortcuts',
-    'shortcuts.playPause': 'Play / pause',
-    'shortcuts.seek': 'Seek {seconds} seconds',
-    'shortcuts.previousNext': 'Previous / next video',
-    'shortcuts.delete': 'Delete video from disk',
-    'shortcuts.fullscreen': 'Fullscreen',
-    'shortcuts.mute': 'Mute',
-  },
-  tr: {
-    'language.label': 'Dil',
-    'library.title': 'Kütüphane',
-    'library.openVideo': 'Video aç',
-    'library.allVideos': 'Tüm videolar',
-    'library.recent': 'Son oynatılanlar',
-    'mediaInfo.title': 'Video bilgisi',
-    'mediaInfo.video': 'Video',
-    'mediaInfo.audio': 'Ses',
-    'mediaInfo.dimensions': 'Boyut',
-    'mediaInfo.format': 'Format',
-    'mediaInfo.file': 'Dosya',
-    'mediaInfo.unknown': 'Bilinmiyor',
-    'mediaInfo.empty': 'Video seçildiğinde teknik bilgiler burada görünür.',
-    'shortcuts.open': 'Klavye kısayolları',
-    'nowPlaying': 'ŞİMDİ OYNATILIYOR',
-    'selectVideo': 'Bir video seçin',
-    'actions.split': 'Videoyu geçerli noktadan böl',
-    'actions.splitTitle': 'FFmpeg ile en yakın anahtar kareden böl',
-    'actions.contactSheet': 'Contact sheet oluştur',
-    'actions.contactSheetTitle': 'Düzenli aralıklarla contact sheet oluştur',
-    'actions.delete': 'Videoyu diskten sil',
-    'actions.deleteTitle': 'Videoyu sil (⌘⌫)',
-    'actions.showQueue': 'Oynatma listesini göster',
-    'empty.title': 'Perde hazır.',
-    'empty.description': 'İzlemeye başlamak için bilgisayarınızdan bir video seçin.',
-    'empty.formats': 'MP4, MOV, WebM ve sisteminizin desteklediği formatlar',
-    'player.play': 'Oynat',
-    'player.pause': 'Duraklat',
-    'player.progress': 'İlerleme',
-    'player.unmute': 'Sesi aç',
-    'player.mute': 'Sessize al',
-    'player.volume': 'Ses',
-    'player.seekBack': '{seconds} saniye geri',
-    'player.seekForward': '{seconds} saniye ileri',
-    'player.previous': 'Önceki',
-    'player.next': 'Sonraki',
-    'player.seekDuration': 'İleri/geri sarma süresi',
-    'player.seekSeconds': 'Sarma saniyesi',
-    'player.secondsShort': 'sn',
-    'player.subtitles': 'Altyazı',
-    'player.speed': 'Oynatma hızı',
-    'player.exitFullscreen': 'Tam ekrandan çık',
-    'player.fullscreen': 'Tam ekran',
-    'queue.playlist': 'Oynatma listesi',
-    'queue.upNext': 'Sıradaki',
-    'queue.close': 'Listeyi kapat',
-    'queue.localVideo': 'Yerel video',
-    'queue.empty': 'Listeniz boş',
-    'queue.addVideo': 'Video ekle',
-    'queue.addMore': 'Listeye video ekle',
-    'notice.close': 'Bildirimi kapat',
-    'error.noVideoTitle': 'Video seçilmedi',
-    'error.noVideoSplit': 'Önce işlem yapılacak bir video açın.',
-    'error.invalidSplitTitle': 'Bölme noktası geçersiz',
-    'error.invalidSplit': 'İmleci videonun başlangıç ve bitişi arasına getirin.',
-    'split.progressTitle': 'Video bölünüyor',
-    'split.progress': '{time} noktasına en yakın anahtar kare hazırlanıyor…',
-    'split.successTitle': 'Video başarıyla bölündü',
-    'split.errorTitle': 'Video bölünemedi',
-    'error.noVideoSheet': 'Önce kareleri çıkarılacak bir video açın.',
-    'error.frameCountTitle': 'Kare sayısı geçersiz',
-    'error.frameCount': '1 ile 60 arasında bir kare sayısı girin.',
-    'sheet.progressTitle': 'Contact sheet hazırlanıyor',
-    'sheet.progress': '{count} kare · yaklaşık {seconds} saniye aralıkla…',
-    'sheet.successTitle': 'Contact sheet oluşturuldu',
-    'sheet.errorTitle': 'Contact sheet oluşturulamadı',
-    'delete.confirm': '“{name}” diskinizden kalıcı olarak silinsin mi? Bu işlem geri alınamaz.',
-    'sheet.settings': 'Contact sheet ayarları',
-    'sheet.extractor': 'GÖRSEL ÇIKARICI',
-    'sheet.create': 'Contact sheet oluştur',
-    'sheet.description': 'Kareler video süresine eşit aralıklarla dağıtılır. FFmpeg kurulumunuz destekliyorsa zaman bilgisi eklenir.',
-    'sheet.frameCount': 'Kare sayısı',
-    'sheet.maxFrames': 'En fazla 60',
-    'sheet.frames': 'kare',
-    'sheet.interval': 'Kare aralığı',
-    'sheet.automatic': 'Otomatik hesaplanır',
-    'sheet.seconds': '{seconds} saniye',
-    'sheet.imageSize': 'Görsel boyutu',
-    'sheet.frameDimensions': 'Her bir karenin ölçüsü',
-    'sheet.cancel': 'Vazgeç',
-    'sheet.confirm': 'Oluştur',
-    'sheet.size.small': 'Küçük · 240×135',
-    'sheet.size.medium': 'Orta · 320×180',
-    'sheet.size.large': 'Büyük · 480×270',
-    'sheet.size.xlarge': 'Çok büyük · 640×360',
-    'common.close': 'Kapat',
-    'shortcuts.keyboard': 'KLAVYE',
-    'shortcuts.title': 'Kısayollar',
-    'shortcuts.playPause': 'Oynat / duraklat',
-    'shortcuts.seek': '{seconds} saniye sar',
-    'shortcuts.previousNext': 'Önceki / sonraki video',
-    'shortcuts.delete': 'Videoyu diskten sil',
-    'shortcuts.fullscreen': 'Tam ekran',
-    'shortcuts.mute': 'Sessize al',
-  },
+export function storedLocale() {
+  try { return window.localStorage.getItem('viplay.locale') || 'en' } catch { return 'en' }
 }
 
-const defaultKeys = Object.keys(messages.en).sort()
-for (const [code, catalog] of Object.entries(messages)) {
-  const keys = Object.keys(catalog).sort()
-  if (keys.length !== defaultKeys.length || keys.some((key, index) => key !== defaultKeys[index])) {
-    throw new Error(`Locale catalog "${code}" does not match the English catalog keys.`)
-  }
-}
-
-function storedLocale() {
-  if (typeof window === 'undefined') return 'en'
-  try {
-    const saved = window.localStorage.getItem('viplay.locale')
-    return messages[saved] ? saved : 'en'
-  } catch {
-    return 'en'
-  }
-}
-
-export const locale = ref(storedLocale())
-
-export function setLocale(nextLocale) {
-  locale.value = messages[nextLocale] ? nextLocale : 'en'
-  if (typeof document !== 'undefined') document.documentElement.lang = locale.value
-  try { window.localStorage.setItem('viplay.locale', locale.value) } catch { /* Persistence is optional. */ }
-  return locale.value
+export async function loadLocale(requestedLocale) {
+  const payload = await GetLocalization(requestedLocale)
+  locale.value = payload.locale
+  locales.value = payload.locales
+  messages.value = payload.messages
+  document.documentElement.lang = payload.locale
+  try { window.localStorage.setItem('viplay.locale', payload.locale) } catch { /* Persistence is optional. */ }
+  return payload.locale
 }
 
 export function t(key, values = {}) {
-  const template = messages[locale.value]?.[key] ?? messages.en[key] ?? key
+  const template = messages.value[key] ?? key
   return template.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? `{${name}}`)
 }
-
-setLocale(locale.value)

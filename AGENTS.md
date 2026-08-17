@@ -12,8 +12,8 @@ This file applies to the entire repository. Keep it concise and store details in
 ## Working rules
 
 - The user may communicate in Turkish, but all Markdown additions, code comments, identifiers, and developer-facing documentation must be written in English.
-- User-facing UI text and messages must never be hardcoded in components or backend operations. Add every feature with both English (`en`) and Turkish (`tr`) translations.
-- English is the default and fallback locale. Adding another language must require only a new catalog and locale-list entry.
+- User-facing UI text and messages must never be hardcoded in components or backend operations. Add every feature with both English (`en`) and Turkish (`tr`) entries in `locales/catalogs.json`.
+- `locales/catalogs.json` is the only localization source. English is the default and fallback locale; adding another language requires only catalog metadata and messages there.
 - Implement change requests with reasonable assumptions; ask only when a material product decision is missing.
 - For diagnosis-only requests, do not edit code unless the user also requests a fix.
 - Do not repeat the same information across comments, documentation, and responses.
@@ -44,7 +44,7 @@ git diff --check
 - macOS linker-version warnings are known environment warnings when tests/builds pass.
 - When FFmpeg behavior changes, run the synthetic-media integration test with the system FFmpeg.
 - When frontend behavior changes, verify the rendered UI when tooling is available; otherwise disclose the limitation.
-- Audit localization key parity and search for user-facing hardcoded strings when UI copy changes.
+- Audit shared-catalog key parity and search for user-facing hardcoded strings when UI copy changes.
 
 ## Delivery
 

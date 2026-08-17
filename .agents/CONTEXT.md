@@ -10,14 +10,15 @@
 
 ## File map
 
-- `app.go`: Wails API models, locale state, native dialogs, and user operations
-- `i18n.go`: backend English/Turkish message catalogs and locale fallback
+- `app.go`: Wails API models, locale state, localization endpoint, native dialogs, and user operations
+- `locales/catalogs.json`: the only English/Turkish localization source for frontend and backend
+- `i18n.go`: embedded catalog loading, validation, locale fallback, and payload creation
 - `main.go`: application startup and authorised local media server
 - `media_analysis.go`: MP4 analysis, thumbnails, and recent-store logic
 - `media_tools.go`: FFmpeg split/contact-sheet logic and H.264 thumbnail decoder
 - `frontend/src/App.vue`: application state, user flows, and template
-- `frontend/src/i18n.js`: frontend locale list, catalogs, interpolation, and persistence
-- `frontend/scripts/check-i18n.mjs`: locale-list, key-parity, and non-empty-value validation
+- `frontend/src/i18n.js`: dynamic backend catalog loading, interpolation, and preference persistence
+- `frontend/scripts/check-i18n.mjs`: embedded JSON key-parity, usage, and non-empty-value validation
 - `frontend/src/styles.css`: visual styling, notifications, and language selector
 - `main_test.go`: backend, localization, FFmpeg errors, and media integration tests
 - `Taskfile.yml`, `build/`: Wails build/package tasks
@@ -25,8 +26,7 @@
 ## Fast routing
 
 - Split or contact sheet: inspect `media_tools.go`, then the related `App.vue` handler.
-- Backend/native copy: update both catalogs in `i18n.go`.
-- Frontend copy: update both catalogs in `frontend/src/i18n.js`; do not hardcode it in components.
+- All user-facing copy: update English and Turkish entries in `locales/catalogs.json`; do not hardcode it in components or Go operations.
 - Notifications: inspect `notify()` and `.operation-notice`.
 - Media authorization: preserve `mediaServer.isAllowed` checks for new file operations.
 - Outputs are created beside the source with collision-free names and moved atomically from temporary files.
@@ -34,7 +34,8 @@
 
 ## Current behavior
 
-- The selected locale is saved in local storage and synchronized to the Wails backend.
+- Vue requests the selected catalog from the Wails backend before mounting; the same call activates the backend locale.
+- The selected locale is saved in local storage, while catalogs remain embedded only in the Go binary.
 - Unknown locale codes fall back to English.
 - Split does not re-encode; `ffprobe` measures the actual split time from the first part.
 - Contact sheets distribute frames evenly into a four-column JPEG grid.

@@ -31,12 +31,13 @@ Distribution artifacts are written under `bin`. Windows builds must run on Windo
 
 ## Localization
 
-English is the default and fallback language. Turkish is included and can be selected from the application header; the choice persists between sessions.
+English is the default and fallback language. Turkish is included and can be selected from the application header; the choice persists between sessions. Vue loads the selected messages from the Go backend before mounting.
 
-- Frontend messages: `frontend/src/i18n.js`
-- Backend errors and native dialog text: `i18n.go`
+- Single localization source: `locales/catalogs.json`
+- Embedded loading and backend translation: `i18n.go`
+- Frontend loading and interpolation: `frontend/src/i18n.js`
 
-Every user-facing feature must include matching English and Turkish translation keys. Add another language by adding its catalog and locale-list entry; application components should not require changes.
+Every user-facing feature must include matching English and Turkish translation keys in the shared JSON file. The catalog is validated and embedded into the application binary at build time. Add another language by adding its metadata and messages there; application components should not require changes.
 
 ## Features
 
