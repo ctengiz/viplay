@@ -1,19 +1,22 @@
-# ViPlay kalıcı kararlar
+# ViPlay durable decisions
 
-Yalnız karar değiştiğinde güncelle. Yeni kayıt biçimi: `DNN · YYYY-MM-DD · karar — gerekçe`.
+Update this file only when a decision changes. New entry format: `DNN · YYYY-MM-DD · decision — rationale`.
 
-## Aktif kararlar
+## Active decisions
 
-- **D01 · 2026-08-17 · FFmpeg bundle edilmeyecek.** Kurulum ve güncelleme kullanıcı/sistem tarafından yönetilir; uygulama `PATH`, macOS'ta ayrıca `/opt/homebrew/bin` ve `/usr/local/bin` üzerinden arar.
-- **D02 · 2026-08-17 · Split stream-copy kullanacak.** Kalite kaybı ve uzun encode süresi önlenir; kesim noktası en yakın uygun anahtar kareye kayabilir.
-- **D03 · 2026-08-17 · Split çıktısı kaynak container uzantısını koruyacak.** İki parça önce kaynak klasörde geçici dizine yazılır, başarıdan sonra nihai adlara taşınır.
-- **D04 · 2026-08-17 · Contact sheet FFmpeg filtre zinciriyle üretilecek.** `ffprobe` süreyi sağlar; `fps`, `scale`, `pad` ve `tile` temel zorunlu filtrelerdir.
-- **D05 · 2026-08-17 · `drawtext` opsiyoneldir.** Bazı FFmpeg dağıtımları filtreyi içermez; yokluğunda timestamp atlanır ve contact sheet yine üretilir.
-- **D06 · 2026-08-17 · FFmpeg hataları kullanıcıya açıklayıcı gösterilecek.** Kurulum eksikliği platform komutlarıyla anlatılır; işlem stderr'i en fazla 800 karaktere indirgenir, UI bu ayrıntıyı satır sararak gösterir.
-- **D07 · 2026-08-17 · Pure Go decoder yalnız thumbnail için kalacak.** Kullanıcı tetiklemeli split/contact-sheet işlemleri FFmpeg'e aittir.
-- **D08 · 2026-08-17 · Her tamamlanan kod değişikliğinden sonra test + Wails build zorunludur.** Sandbox ortamında Go cache `/private/tmp/viplay-go-build` kullanılmalıdır.
+- **D01 · 2026-08-17 · FFmpeg is not bundled.** Installation and updates remain managed by the user/system; the app searches `PATH`, plus `/opt/homebrew/bin` and `/usr/local/bin` on macOS.
+- **D02 · 2026-08-17 · Split uses stream-copy.** This avoids quality loss and long encoding times; the split may move to the nearest suitable keyframe.
+- **D03 · 2026-08-17 · Split output keeps the source container extension.** Both parts are written to a temporary directory beside the source and moved to final names after success.
+- **D04 · 2026-08-17 · Contact sheets use an FFmpeg filter chain.** `ffprobe` supplies duration; `fps`, `scale`, `pad`, and `tile` are the required filters.
+- **D05 · 2026-08-17 · `drawtext` is optional.** Some FFmpeg distributions omit it; timestamps are skipped and the contact sheet still succeeds.
+- **D06 · 2026-08-17 · FFmpeg errors must be actionable.** Missing dependencies include platform install commands; operation stderr is capped at 800 characters and shown in a wrapping UI surface.
+- **D07 · 2026-08-17 · The pure Go decoder remains only for thumbnails.** User-triggered split and contact-sheet operations belong to FFmpeg.
+- **D08 · 2026-08-17 · Tests and a Wails build are required after every completed code change.** Sandbox runs use `/private/tmp/viplay-go-build` as the Go cache.
+- **D09 · 2026-08-17 · English is the default and fallback application locale.** The initial release supports English and Turkish, and the selected locale persists between sessions.
+- **D10 · 2026-08-17 · Every feature must ship with English and Turkish UI copy.** User-facing strings live in locale catalogs, never inline in components or operations. Additional languages are added through a catalog and locale-list entry.
+- **D11 · 2026-08-17 · Repository prose is English-only.** Markdown, code comments, identifiers, and developer documentation remain English even when user instructions are Turkish; Turkish is valid inside translation catalogs.
 
-## Karar değiştirme kuralı
+## Superseding a decision
 
-Eski kaydı silme. Kararı `Değiştirildi: DNN` notuyla işaretle ve yeni numaralı kararı ekle; böylece sonraki oturumlar gerekçeyi kaybetmez.
+Do not delete an old entry. Mark it with `Superseded by: DNN` and add the replacement as a new numbered decision so future sessions retain the rationale.
 

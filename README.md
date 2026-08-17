@@ -1,19 +1,17 @@
 # ViPlay
 
-ViPlay, Go + Wails v3 + Vue 3 ile geliştirilmiş macOS, Linux ve Windows masaüstü video oynatıcısıdır.
+ViPlay is a cross-platform desktop video player built with Go, Wails v3, and Vue 3 for macOS, Linux, and Windows.
 
-## Gereksinimler
+## Requirements
 
 - Go 1.24+
 - Node.js 20+
-- Wails platform bağımlılıkları: https://wails.io/docs/gettingstarted/installation
-- Video bölme ve contact sheet işlemleri için sistemde kurulu `ffmpeg` ve `ffprobe`
+- Wails platform dependencies: https://wails.io/docs/gettingstarted/installation
+- System-installed `ffmpeg` and `ffprobe` for video splitting and contact sheets
 
-FFmpeg uygulamayla birlikte paketlenmez. macOS'ta `brew install ffmpeg`, Windows'ta
-`winget install Gyan.FFmpeg`, Linux'ta ise dağıtımın paket yöneticisi kullanılabilir.
-Kurulumdan sonra ViPlay yeniden başlatılmalıdır.
+FFmpeg is not bundled with the application. Install it with `brew install ffmpeg` on macOS, `winget install Gyan.FFmpeg` on Windows, or the distribution package manager on Linux. Restart ViPlay after installation.
 
-## Geliştirme
+## Development
 
 ```bash
 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.8
@@ -21,25 +19,35 @@ cd frontend && npm install && cd ..
 wails3 dev
 ```
 
-## Derleme
+## Build
 
-Aktif işletim sistemi için:
+For the active operating system:
 
 ```bash
 wails3 task package
 ```
 
-Dağıtım çıktısı `bin` altında oluşur. Windows derlemesi Windows'ta, macOS uygulama paketi macOS'ta ve Linux paketi Linux'ta üretilmelidir; CI matrisi üç platformu da kapsar.
+Distribution artifacts are written under `bin`. Windows builds must run on Windows, macOS application bundles on macOS, and Linux packages on Linux; the CI matrix covers all three platforms.
 
-## Özellikler
+## Localization
 
-- Birden fazla yerel video seçme ve oynatma listesi
-- Oynat/duraklat, ileri/geri sarma, önceki/sonraki video
-- Ses, sessize alma, oynatma hızı ve tam ekran
-- WebVTT altyazı dosyası ekleme
-- Klavye kısayolları: `Space`, `←`, `→`, `F`, `M`, klasörde gezinmek için `⌘←` / `⌘→`, videoyu diskten silmek için `⌘⌫`
-- FFmpeg ile kalite kaybı olmadan anahtar kareden video bölme ve contact sheet oluşturma
-- Video/ses codec, kapsayıcı, çözünürlük, FPS ve dosya boyutu bilgileri
-- Range istekleriyle güvenli yerel medya akışı
+English is the default and fallback language. Turkish is included and can be selected from the application header; the choice persists between sessions.
 
-Codec desteği işletim sisteminin WebView medya motoruna bağlıdır. En geniş ortak destek için H.264/AAC içeren MP4 önerilir.
+- Frontend messages: `frontend/src/i18n.js`
+- Backend errors and native dialog text: `i18n.go`
+
+Every user-facing feature must include matching English and Turkish translation keys. Add another language by adding its catalog and locale-list entry; application components should not require changes.
+
+## Features
+
+- Multi-file local playback queue
+- Play/pause, seeking, previous/next navigation, playback speed, volume, and fullscreen
+- WebVTT subtitle loading
+- Keyboard shortcuts: `Space`, `←`, `→`, `F`, `M`, `⌘←` / `⌘→` for folder navigation, and `⌘⌫` for disk deletion
+- Lossless FFmpeg stream-copy splitting at keyframes
+- FFmpeg contact-sheet generation
+- Video/audio codec, container, dimensions, FPS, and file-size information
+- Authorized local media streaming with HTTP range requests
+- Persistent English and Turkish UI
+
+Codec playback support depends on the operating system WebView media engine. H.264/AAC in MP4 provides the broadest common compatibility.

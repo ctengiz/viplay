@@ -1,8 +1,9 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Film, FolderOpen, Gauge, Images, Keyboard, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
+import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Film, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Window } from '@wailsio/runtime'
-import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SplitVideo } from '../bindings/viplay/app'
+import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SetLocale, SplitVideo } from '../bindings/viplay/app'
+import { locale, locales, setLocale, t } from './i18n'
 
 const video = ref(null)
 const queue = ref([])
@@ -30,7 +31,12 @@ const item = computed(() => queue.value[index.value])
 const progress = computed(() => `${duration.value ? current.value / duration.value * 100 : 0}%`)
 const volumeProgress = computed(() => `${volume.value * 100}%`)
 const speeds = [.5, .75, 1, 1.25, 1.5, 2]
-const sheetSizes = [{ label: 'Küçük · 240×135', value: 240 }, { label: 'Orta · 320×180', value: 320 }, { label: 'Büyük · 480×270', value: 480 }, { label: 'Çok büyük · 640×360', value: 640 }]
+const sheetSizes = computed(() => [
+  { label: t('sheet.size.small'), value: 240 },
+  { label: t('sheet.size.medium'), value: 320 },
+  { label: t('sheet.size.large'), value: 480 },
+  { label: t('sheet.size.xlarge'), value: 640 },
+])
 const sheetSpacing = computed(() => duration.value > 0 ? duration.value / (Number(sheetFrameCount.value) + 1) : 0)
 
 function notify(type, title, detail = '') {
@@ -70,28 +76,28 @@ async function markPlayed() {
 }
 
 async function splitCurrent() {
-  if (!item.value) { notify('error', 'Video seçilmedi', 'Önce işlem yapılacak bir video açın.'); return }
+  if (!item.value) { notify('error', t('error.noVideoTitle'), t('error.noVideoSplit')); return }
   if (processing.value) return
   if (video.value && !video.value.paused) video.value.pause()
   const splitAt = video.value?.currentTime ?? current.value
-  if (splitAt <= 0 || splitAt >= duration.value) { notify('error', 'Bölme noktası geçersiz', 'İmleci videonun başlangıç ve bitişi arasına getirin.'); return }
+  if (splitAt <= 0 || splitAt >= duration.value) { notify('error', t('error.invalidSplitTitle'), t('error.invalidSplit')); return }
   processing.value = 'split'
-  notify('progress', 'Video bölünüyor', `${fmt(splitAt)} noktasına en yakın anahtar kare hazırlanıyor…`)
+  notify('progress', t('split.progressTitle'), t('split.progress', { time: fmt(splitAt) }))
   await nextTick()
   try {
     const result = await SplitVideo(item.value.path, splitAt)
-    notify('success', 'Video başarıyla bölündü', `${fmt(result.splitTime)} · ${result.firstPath} · ${result.secondPath}`)
+    notify('success', t('split.successTitle'), `${fmt(result.splitTime)} · ${result.firstPath} · ${result.secondPath}`)
     if (libraryView.value === 'folder') {
       const activePath = item.value.path
       queue.value = await DirectoryVideos(activePath)
       index.value = queue.value.findIndex(entry => entry.path === activePath)
     }
-  } catch (error) { notify('error', 'Video bölünemedi', String(error)) }
+  } catch (error) { notify('error', t('split.errorTitle'), String(error)) }
   finally { processing.value = '' }
 }
 
 function createContactSheet() {
-  if (!item.value) { notify('error', 'Video seçilmedi', 'Önce kareleri çıkarılacak bir video açın.'); return }
+  if (!item.value) { notify('error', t('error.noVideoTitle'), t('error.noVideoSheet')); return }
   if (processing.value) return
   showSheetDialog.value = true
 }
@@ -99,15 +105,15 @@ function createContactSheet() {
 async function runContactSheet() {
   const count = Math.round(Number(sheetFrameCount.value))
   const imageWidth = Number(sheetImageWidth.value)
-  if (!Number.isFinite(count) || count < 1 || count > 60) { notify('error', 'Kare sayısı geçersiz', '1 ile 60 arasında bir kare sayısı girin.'); return }
+  if (!Number.isFinite(count) || count < 1 || count > 60) { notify('error', t('error.frameCountTitle'), t('error.frameCount')); return }
   showSheetDialog.value = false
   processing.value = 'sheet'
-  notify('progress', 'Contact sheet hazırlanıyor', `${count} kare · yaklaşık ${sheetSpacing.value.toFixed(1)} saniye aralıkla…`)
+  notify('progress', t('sheet.progressTitle'), t('sheet.progress', { count, seconds: sheetSpacing.value.toFixed(1) }))
   await nextTick()
   try {
     const output = await ExtractContactSheet(item.value.path, count, imageWidth)
-    notify('success', 'Contact sheet oluşturuldu', output)
-  } catch (error) { notify('error', 'Contact sheet oluşturulamadı', String(error)) }
+    notify('success', t('sheet.successTitle'), output)
+  } catch (error) { notify('error', t('sheet.errorTitle'), String(error)) }
   finally { processing.value = '' }
 }
 
@@ -144,7 +150,7 @@ async function select(i, autoplay = false) {
   subtitle.value = null
   if (autoplay) {
     await nextTick()
-    try { await video.value?.play() } catch { /* Oynatma kontrolü kullanıcıya açık kalır. */ }
+    try { await video.value?.play() } catch { /* Playback remains available through the user controls. */ }
   }
 }
 function next() { if (index.value < queue.value.length - 1) select(index.value + 1, true) }
@@ -166,7 +172,7 @@ async function navigateDirectory(direction) {
 async function deleteCurrent() {
   if (!item.value) return
   const deleting = item.value
-  if (!window.confirm(`“${deleting.name}” diskinizden kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return
+  if (!window.confirm(t('delete.confirm', { name: deleting.name }))) return
   await DeleteVideo(deleting.path)
   queue.value.splice(index.value, 1)
   if (index.value >= queue.value.length) index.value = Math.max(0, queue.value.length - 1)
@@ -202,7 +208,14 @@ function onKey(event) {
 watch(speed, value => { if (video.value) video.value.playbackRate = value })
 watch(volume, value => { if (video.value) video.value.volume = value })
 watch(item, async value => { mediaInfo.value = value ? await ProbeMedia(value.path) : null }, { immediate: true })
-onMounted(() => window.addEventListener('keydown', onKey))
+async function changeLanguage(event) {
+  const selected = setLocale(event.target.value)
+  try { await SetLocale(selected) } catch { /* The backend locale is synced when Wails is available. */ }
+}
+onMounted(() => {
+  window.addEventListener('keydown', onKey)
+  SetLocale(locale.value).catch(() => {})
+})
 onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.clearTimeout(noticeTimer) })
 </script>
 
@@ -211,34 +224,35 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark"><Play :size="14" fill="currentColor" /></span>ViPlay</div>
       <nav>
-        <span class="nav-title">Kütüphane</span>
-        <button class="open-button" @click="openVideos"><FolderOpen :size="19" />Video aç</button>
-        <button class="nav-item" :class="{ selected: libraryView === 'folder' }"><Film :size="18" />Tüm videolar<span>{{ libraryView === 'folder' ? queue.length : '' }}</span></button>
-        <button class="nav-item" :class="{ selected: libraryView === 'recent' }" @click="loadRecent"><RotateCcw :size="18" />Son oynatılanlar</button>
+        <span class="nav-title">{{ t('library.title') }}</span>
+        <button class="open-button" @click="openVideos"><FolderOpen :size="19" />{{ t('library.openVideo') }}</button>
+        <button class="nav-item" :class="{ selected: libraryView === 'folder' }"><Film :size="18" />{{ t('library.allVideos') }}<span>{{ libraryView === 'folder' ? queue.length : '' }}</span></button>
+        <button class="nav-item" :class="{ selected: libraryView === 'recent' }" @click="loadRecent"><RotateCcw :size="18" />{{ t('library.recent') }}</button>
       </nav>
       <div class="media-sidebar">
-        <span>Video bilgisi</span>
+        <span>{{ t('mediaInfo.title') }}</span>
         <dl v-if="item">
-          <div><dt>Video</dt><dd>{{ mediaInfo?.videoCodec?.toUpperCase() || 'Bilinmiyor' }}</dd></div>
-          <div><dt>Ses</dt><dd>{{ mediaInfo?.audioCodec?.toUpperCase() || 'Bilinmiyor' }}</dd></div>
-          <div><dt>Boyut</dt><dd>{{ mediaInfo?.width ? `${mediaInfo.width}×${mediaInfo.height}` : '—' }}</dd></div>
-          <div><dt>Format</dt><dd>{{ mediaInfo?.container?.toUpperCase() || '—' }}</dd></div>
+          <div><dt>{{ t('mediaInfo.video') }}</dt><dd>{{ mediaInfo?.videoCodec?.toUpperCase() || t('mediaInfo.unknown') }}</dd></div>
+          <div><dt>{{ t('mediaInfo.audio') }}</dt><dd>{{ mediaInfo?.audioCodec?.toUpperCase() || t('mediaInfo.unknown') }}</dd></div>
+          <div><dt>{{ t('mediaInfo.dimensions') }}</dt><dd>{{ mediaInfo?.width ? `${mediaInfo.width}×${mediaInfo.height}` : '—' }}</dd></div>
+          <div><dt>{{ t('mediaInfo.format') }}</dt><dd>{{ mediaInfo?.container?.toUpperCase() || '—' }}</dd></div>
           <div><dt>FPS</dt><dd>{{ mediaInfo?.fps || '—' }}</dd></div>
-          <div><dt>Dosya</dt><dd>{{ fileSize(mediaInfo?.size) }}</dd></div>
+          <div><dt>{{ t('mediaInfo.file') }}</dt><dd>{{ fileSize(mediaInfo?.size) }}</dd></div>
         </dl>
-        <p v-else>Video seçildiğinde teknik bilgiler burada görünür.</p>
+        <p v-else>{{ t('mediaInfo.empty') }}</p>
       </div>
-      <button class="shortcut-trigger" @click="showShortcuts = true"><Keyboard :size="18" /><span>Klavye kısayolları</span></button>
+      <button class="shortcut-trigger" @click="showShortcuts = true"><Keyboard :size="18" /><span>{{ t('shortcuts.open') }}</span></button>
     </aside>
 
     <section class="player-shell">
       <header class="topbar">
-        <div><span class="eyebrow">ŞİMDİ OYNATILIYOR</span><strong :title="item?.name">{{ item?.name || 'Bir video seçin' }}</strong></div>
+        <div><span class="eyebrow">{{ t('nowPlaying') }}</span><strong :title="item?.name">{{ item?.name || t('selectVideo') }}</strong></div>
         <div class="topbar-actions">
-          <button class="icon-btn operation-btn" :class="{ processing: processing === 'split' }" aria-label="Videoyu geçerli noktadan böl" title="FFmpeg ile videoyu geçerli noktaya en yakın anahtar kareden ikiye böl" @click="splitCurrent"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /></button>
-          <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" aria-label="Contact sheet oluştur" title="Belirli aralıklarla contact sheet oluştur" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
-          <button class="icon-btn danger" :disabled="!item" aria-label="Videoyu diskten sil" title="Videoyu sil (⌘⌫)" @click="deleteCurrent"><Trash2 :size="19" /></button>
-          <button class="icon-btn" :class="{ active: showQueue }" aria-label="Oynatma listesini göster" title="Oynatma listesini göster" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
+          <label class="language-picker" :title="t('language.label')"><Languages :size="16" /><select :value="locale" :aria-label="t('language.label')" @change="changeLanguage"><option v-for="language in locales" :key="language.code" :value="language.code">{{ language.label }}</option></select><ChevronDown :size="12" /></label>
+          <button class="icon-btn operation-btn" :class="{ processing: processing === 'split' }" :aria-label="t('actions.split')" :title="t('actions.splitTitle')" @click="splitCurrent"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /></button>
+          <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" :aria-label="t('actions.contactSheet')" :title="t('actions.contactSheetTitle')" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
+          <button class="icon-btn danger" :disabled="!item" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="deleteCurrent"><Trash2 :size="19" /></button>
+          <button class="icon-btn" :class="{ active: showQueue }" :aria-label="t('actions.showQueue')" :title="t('actions.showQueue')" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
         </div>
       </header>
 
@@ -248,53 +262,53 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
         </video>
         <div v-else class="empty-state">
           <div class="empty-icon"><Film :size="42" /></div>
-          <h1>Perde hazır.</h1><p>İzlemeye başlamak için bilgisayarınızdan bir video seçin.</p>
-          <button @click="openVideos"><FolderOpen :size="18" />Video aç</button>
-          <small>MP4, MOV, WebM ve sisteminizin desteklediği formatlar</small>
+          <h1>{{ t('empty.title') }}</h1><p>{{ t('empty.description') }}</p>
+          <button @click="openVideos"><FolderOpen :size="18" />{{ t('library.openVideo') }}</button>
+          <small>{{ t('empty.formats') }}</small>
         </div>
-        <button v-if="item" class="center-play" :aria-label="playing ? 'Duraklat' : 'Oynat'" @click="toggle">
+        <button v-if="item" class="center-play" :aria-label="playing ? t('player.pause') : t('player.play')" @click="toggle">
           <Pause v-if="playing" :size="34" fill="currentColor" /><Play v-else :size="36" fill="currentColor" />
         </button>
         <div class="bottom-fade" />
       </div>
 
       <div class="controls">
-        <div class="timeline-row"><span>{{ fmt(current) }}</span><input aria-label="İlerleme" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @input="seek"><span>{{ fmt(duration) }}</span></div>
+        <div class="timeline-row"><span>{{ fmt(current) }}</span><input :aria-label="t('player.progress')" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @input="seek"><span>{{ fmt(duration) }}</span></div>
         <div class="control-row">
           <div class="volume-group">
-            <button class="icon-btn" :aria-label="muted ? 'Sesi aç' : 'Sessize al'" @click="muted = !muted"><VolumeX v-if="muted || volume === 0" :size="20" /><Volume2 v-else :size="20" /></button>
-            <input v-model.number="volume" aria-label="Ses" type="range" min="0" max="1" step=".01" :style="{ '--progress': volumeProgress }">
+            <button class="icon-btn" :aria-label="muted ? t('player.unmute') : t('player.mute')" @click="muted = !muted"><VolumeX v-if="muted || volume === 0" :size="20" /><Volume2 v-else :size="20" /></button>
+            <input v-model.number="volume" :aria-label="t('player.volume')" type="range" min="0" max="1" step=".01" :style="{ '--progress': volumeProgress }">
           </div>
           <div class="transport">
-            <button class="icon-btn" :aria-label="`${seekStep} saniye geri`" @click="seekBy(-seekStep)"><RotateCcw :size="19" /></button>
-            <button class="icon-btn" aria-label="Önceki" @click="previous"><SkipBack :size="21" fill="currentColor" /></button>
-            <button class="primary-play" :aria-label="playing ? 'Duraklat' : 'Oynat'" @click="toggle"><Pause v-if="playing" fill="currentColor" /><Play v-else fill="currentColor" /></button>
-            <button class="icon-btn" aria-label="Sonraki" @click="next"><SkipForward :size="21" fill="currentColor" /></button>
-            <button class="icon-btn" :aria-label="`${seekStep} saniye ileri`" @click="seekBy(seekStep)"><RotateCw :size="19" /></button>
+            <button class="icon-btn" :aria-label="t('player.seekBack', { seconds: seekStep })" @click="seekBy(-seekStep)"><RotateCcw :size="19" /></button>
+            <button class="icon-btn" :aria-label="t('player.previous')" @click="previous"><SkipBack :size="21" fill="currentColor" /></button>
+            <button class="primary-play" :aria-label="playing ? t('player.pause') : t('player.play')" @click="toggle"><Pause v-if="playing" fill="currentColor" /><Play v-else fill="currentColor" /></button>
+            <button class="icon-btn" :aria-label="t('player.next')" @click="next"><SkipForward :size="21" fill="currentColor" /></button>
+            <button class="icon-btn" :aria-label="t('player.seekForward', { seconds: seekStep })" @click="seekBy(seekStep)"><RotateCw :size="19" /></button>
           </div>
           <div class="tools">
-            <label class="seek-step" title="İleri/geri sarma süresi"><input v-model.number="seekStep" aria-label="Sarma saniyesi" type="number" min="1" max="300" step="1" @change="normaliseSeekStep"><span>sn</span></label>
-            <button class="tool" :class="{ active: subtitle }" @click="openSubtitle"><Captions :size="20" /><span>Altyazı</span></button>
-            <label class="speed"><Gauge :size="19" /><select v-model.number="speed" aria-label="Oynatma hızı"><option v-for="value in speeds" :key="value" :value="value">{{ value }}×</option></select><ChevronDown :size="14" /></label>
-            <button class="icon-btn" :class="{ active: fullscreenActive }" :aria-label="fullscreenActive ? 'Tam ekrandan çık' : 'Tam ekran'" @click="fullscreen"><Minimize v-if="fullscreenActive" :size="20" /><Maximize v-else :size="20" /></button>
+            <label class="seek-step" :title="t('player.seekDuration')"><input v-model.number="seekStep" :aria-label="t('player.seekSeconds')" type="number" min="1" max="300" step="1" @change="normaliseSeekStep"><span>{{ t('player.secondsShort') }}</span></label>
+            <button class="tool" :class="{ active: subtitle }" @click="openSubtitle"><Captions :size="20" /><span>{{ t('player.subtitles') }}</span></button>
+            <label class="speed"><Gauge :size="19" /><select v-model.number="speed" :aria-label="t('player.speed')"><option v-for="value in speeds" :key="value" :value="value">{{ value }}×</option></select><ChevronDown :size="14" /></label>
+            <button class="icon-btn" :class="{ active: fullscreenActive }" :aria-label="fullscreenActive ? t('player.exitFullscreen') : t('player.fullscreen')" @click="fullscreen"><Minimize v-if="fullscreenActive" :size="20" /><Maximize v-else :size="20" /></button>
           </div>
         </div>
       </div>
     </section>
 
     <aside v-if="showQueue" class="queue">
-      <div class="queue-head"><div><span>Oynatma listesi</span><strong>Sıradaki</strong></div><button class="icon-btn" aria-label="Listeyi kapat" @click="showQueue = false"><X :size="20" /></button></div>
+      <div class="queue-head"><div><span>{{ t('queue.playlist') }}</span><strong>{{ t('queue.upNext') }}</strong></div><button class="icon-btn" :aria-label="t('queue.close')" @click="showQueue = false"><X :size="20" /></button></div>
       <div class="queue-list">
         <template v-if="queue.length">
           <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: i === index }" @click="select(i, true)">
             <span class="queue-number"><Speaker v-if="i === index" :size="15" /><template v-else>{{ String(i + 1).padStart(2, '0') }}</template></span>
             <span class="thumb"><img v-if="entry.kind === 'video'" :src="entry.thumbnailUrl" alt="" loading="lazy" @error="$event.currentTarget.style.display = 'none'"><Film :size="22" /><i v-if="i === index && playing"><span /><span /><span /></i></span>
-            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ entry.kind === 'audio' ? 'Ses' : 'Yerel video' }}</small></span><ChevronRight :size="16" />
+            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ entry.kind === 'audio' ? t('mediaInfo.audio') : t('queue.localVideo') }}</small></span><ChevronRight :size="16" />
           </button>
         </template>
-        <div v-else class="queue-empty"><ListVideo :size="28" /><p>Listeniz boş</p><button @click="openVideos">Video ekle</button></div>
+        <div v-else class="queue-empty"><ListVideo :size="28" /><p>{{ t('queue.empty') }}</p><button @click="openVideos">{{ t('queue.addVideo') }}</button></div>
       </div>
-      <button class="add-more" @click="openVideos"><FolderOpen :size="17" />Listeye video ekle</button>
+      <button class="add-more" @click="openVideos"><FolderOpen :size="17" />{{ t('queue.addMore') }}</button>
     </aside>
 
     <Transition name="notice">
@@ -302,33 +316,33 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
         <LoaderCircle v-if="notice.type === 'progress'" class="spin" :size="22" />
         <CheckCircle2 v-else-if="notice.type === 'success'" :size="22" />
         <AlertCircle v-else :size="22" />
-        <span><strong>{{ notice.title }}</strong><small>{{ notice.detail }}</small></span><button class="notice-close" aria-label="Bildirimi kapat" @click="notice = null"><X :size="15" /></button>
+        <span><strong>{{ notice.title }}</strong><small>{{ notice.detail }}</small></span><button class="notice-close" :aria-label="t('notice.close')" @click="notice = null"><X :size="15" /></button>
       </div>
     </Transition>
 
-    <div v-if="showSheetDialog" class="shortcut-modal sheet-modal" role="dialog" aria-modal="true" aria-label="Contact sheet ayarları" @click.self="showSheetDialog = false">
+    <div v-if="showSheetDialog" class="shortcut-modal sheet-modal" role="dialog" aria-modal="true" :aria-label="t('sheet.settings')" @click.self="showSheetDialog = false">
       <section>
-        <header><div><span>Görsel çıkarıcı</span><strong>Contact sheet oluştur</strong></div><button class="icon-btn" aria-label="Kapat" @click="showSheetDialog = false"><X :size="20" /></button></header>
-        <p>Kareler video süresine eşit aralıklarla dağıtılır ve her görselin üzerine zaman bilgisi eklenir.</p>
+        <header><div><span>{{ t('sheet.extractor') }}</span><strong>{{ t('sheet.create') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showSheetDialog = false"><X :size="20" /></button></header>
+        <p>{{ t('sheet.description') }}</p>
         <div class="sheet-options">
-          <label><span>Kare sayısı<small>En fazla 60</small></span><span class="sheet-input"><input v-model.number="sheetFrameCount" type="number" min="1" max="60" step="1" autofocus><small>kare</small></span></label>
-          <label><span>Kare aralığı<small>Otomatik hesaplanır</small></span><output>{{ sheetSpacing ? `${sheetSpacing.toFixed(1)} saniye` : '—' }}</output></label>
-          <label><span>Görsel boyutu<small>Her bir karenin ölçüsü</small></span><select v-model.number="sheetImageWidth"><option v-for="size in sheetSizes" :key="size.value" :value="size.value">{{ size.label }}</option></select></label>
+          <label><span>{{ t('sheet.frameCount') }}<small>{{ t('sheet.maxFrames') }}</small></span><span class="sheet-input"><input v-model.number="sheetFrameCount" type="number" min="1" max="60" step="1" autofocus><small>{{ t('sheet.frames') }}</small></span></label>
+          <label><span>{{ t('sheet.interval') }}<small>{{ t('sheet.automatic') }}</small></span><output>{{ sheetSpacing ? t('sheet.seconds', { seconds: sheetSpacing.toFixed(1) }) : '—' }}</output></label>
+          <label><span>{{ t('sheet.imageSize') }}<small>{{ t('sheet.frameDimensions') }}</small></span><select v-model.number="sheetImageWidth"><option v-for="size in sheetSizes" :key="size.value" :value="size.value">{{ size.label }}</option></select></label>
         </div>
-        <footer><button class="cancel" @click="showSheetDialog = false">Vazgeç</button><button class="confirm" @click="runContactSheet"><Images :size="17" />Oluştur</button></footer>
+        <footer><button class="cancel" @click="showSheetDialog = false">{{ t('sheet.cancel') }}</button><button class="confirm" @click="runContactSheet"><Images :size="17" />{{ t('sheet.confirm') }}</button></footer>
       </section>
     </div>
 
-    <div v-if="showShortcuts" class="shortcut-modal" role="dialog" aria-modal="true" aria-label="Klavye kısayolları" @click.self="showShortcuts = false">
+    <div v-if="showShortcuts" class="shortcut-modal" role="dialog" aria-modal="true" :aria-label="t('shortcuts.open')" @click.self="showShortcuts = false">
       <section>
-        <header><div><span>Klavye</span><strong>Kısayollar</strong></div><button class="icon-btn" aria-label="Kapat" @click="showShortcuts = false"><X :size="20" /></button></header>
+        <header><div><span>{{ t('shortcuts.keyboard') }}</span><strong>{{ t('shortcuts.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showShortcuts = false"><X :size="20" /></button></header>
         <dl>
-          <div><dt>Oynat / duraklat</dt><dd><kbd>Space</kbd></dd></div>
-          <div><dt>{{ seekStep }} saniye sar</dt><dd><kbd>←</kbd><kbd>→</kbd></dd></div>
-          <div><dt>Önceki / sonraki video</dt><dd><kbd>⌘←</kbd><kbd>⌘→</kbd></dd></div>
-          <div><dt>Videoyu diskten sil</dt><dd><kbd>⌘⌫</kbd></dd></div>
-          <div><dt>Tam ekran</dt><dd><kbd>F</kbd></dd></div>
-          <div><dt>Sessize al</dt><dd><kbd>M</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.playPause') }}</dt><dd><kbd>Space</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.seek', { seconds: seekStep }) }}</dt><dd><kbd>←</kbd><kbd>→</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.previousNext') }}</dt><dd><kbd>⌘←</kbd><kbd>⌘→</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.delete') }}</dt><dd><kbd>⌘⌫</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.fullscreen') }}</dt><dd><kbd>F</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.mute') }}</dt><dd><kbd>M</kbd></dd></div>
         </dl>
       </section>
     </div>

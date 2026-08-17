@@ -1,47 +1,51 @@
 # ViPlay agent guide
 
-Bu dosya depo genelinde geçerlidir. Kısa tut; ayrıntıyı bağlantılı dosyalarda sakla.
+This file applies to the entire repository. Keep it concise and store details in the linked files.
 
-## Oturum başlangıcı
+## Session start
 
-1. `.agents/CONTEXT.md` dosyasını bir kez oku.
-2. Yalnız mimari, medya işleme veya bağımlılık kararı gerekiyorsa `.agents/DECISIONS.md` dosyasını oku.
-3. İlgili dosyaları `rg` ile hedefli ara; tüm depoyu tekrar tekrar tarama.
-4. Mevcut kullanıcı değişikliklerini koru ve ilgisiz dosyalara dokunma.
+1. Read `.agents/CONTEXT.md` once.
+2. Read `.agents/DECISIONS.md` only when an architecture, media-processing, dependency, or localization decision is needed.
+3. Search relevant files with `rg`; do not repeatedly scan the entire repository.
+4. Preserve existing user changes and do not touch unrelated files.
 
-## Çalışma biçimi
+## Working rules
 
-- Kullanıcıyla Türkçe ve sonuç odaklı iletişim kur.
-- Değişiklik istenirse makul varsayımlarla uygula; yalnız anlamlı ürün kararı eksikse sor.
-- Tanılama istenirse kullanıcı ayrıca istemedikçe kodu değiştirme.
-- Aynı bilgiyi yorumlarda, belgelerde ve yanıtta tekrarlama.
-- Alt ajanları yalnız kullanıcı açıkça isterse kullan.
-- Kalıcı bir teknik karar değişirse `.agents/DECISIONS.md` dosyasını aynı görevde güncelle.
-- Dosya haritası veya doğrulama komutları değişirse `.agents/CONTEXT.md` dosyasını güncelle.
+- The user may communicate in Turkish, but all Markdown additions, code comments, identifiers, and developer-facing documentation must be written in English.
+- User-facing UI text and messages must never be hardcoded in components or backend operations. Add every feature with both English (`en`) and Turkish (`tr`) translations.
+- English is the default and fallback locale. Adding another language must require only a new catalog and locale-list entry.
+- Implement change requests with reasonable assumptions; ask only when a material product decision is missing.
+- For diagnosis-only requests, do not edit code unless the user also requests a fix.
+- Do not repeat the same information across comments, documentation, and responses.
+- Use sub-agents only when explicitly requested by the user.
+- Update `.agents/DECISIONS.md` in the same task when a durable technical decision changes.
+- Update `.agents/CONTEXT.md` when the file map or validation commands change.
 
-## Değişmez ürün kararları
+## Stable product decisions
 
-- FFmpeg/ffprobe uygulamayla bundle edilmez; sistem kurulumundan kullanılır.
-- Video split, FFmpeg stream-copy ile en yakın anahtar kareden yapılır.
-- Contact sheet FFmpeg ile üretilir; `drawtext` yoksa zaman damgası atlanır, işlem başarısız olmaz.
-- Kullanıcıya gösterilen uzun hatalar kırpılmadan, satır sararak ve kaydırılabilir biçimde sunulur.
-- Pure Go H.264 kodu yalnız hafif thumbnail önizlemesi için korunur.
+- FFmpeg/ffprobe are system dependencies and are not bundled with the application.
+- Video splitting uses FFmpeg stream-copy at the nearest keyframe.
+- Contact sheets use FFmpeg; if `drawtext` is unavailable, timestamps are omitted without failing the operation.
+- Long user-facing errors wrap, scroll, and remain readable.
+- The pure Go H.264 decoder remains only for lightweight thumbnail previews.
+- The complete localization policy is recorded in `.agents/DECISIONS.md`.
 
-## Zorunlu doğrulama
+## Required validation
 
-Her tamamlanan kod değişikliğinden sonra testleri ve tam uygulama build'ini çalıştır:
+After every completed code change, run tests and the full application build:
 
 ```bash
 env GOCACHE=/private/tmp/viplay-go-build go test ./...
+npm --prefix frontend run check:i18n
 env GOCACHE=/private/tmp/viplay-go-build PATH=/Users/ct/go/bin:/Users/ct/.local/bin:/opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin /Users/ct/go/bin/wails3 task build
 git diff --check
 ```
 
-- macOS linker sürüm uyarıları test/build başarılıysa bilinen ortam uyarısıdır.
-- FFmpeg davranışı değişirse sistem FFmpeg'iyle sentetik medya entegrasyon testini çalıştır.
-- Frontend davranışı değişirse mümkünse render edilmiş arayüzü doğrula; araç yoksa bunu sonuçta açıkça belirt.
+- macOS linker-version warnings are known environment warnings when tests/builds pass.
+- When FFmpeg behavior changes, run the synthetic-media integration test with the system FFmpeg.
+- When frontend behavior changes, verify the rendered UI when tooling is available; otherwise disclose the limitation.
+- Audit localization key parity and search for user-facing hardcoded strings when UI copy changes.
 
-## Teslim
+## Delivery
 
-Son yanıtta yalnız sonucu, değişen davranışı, doğrulama durumunu ve kalan gerçek riski belirt.
-
+In the final response, report only the outcome, changed behavior, validation status, and any real remaining risk.

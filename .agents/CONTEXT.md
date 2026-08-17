@@ -1,40 +1,47 @@
-# ViPlay hızlı bağlam
+# ViPlay quick context
 
-## Teknoloji
+## Stack
 
-- Go 1.25, Wails v3 beta.8
-- Vue 3, Vite, Lucide
-- Masaüstü hedefleri: macOS, Windows, Linux
-- Harici çalışma zamanı araçları: `ffmpeg`, `ffprobe`
+- Go 1.25 and Wails v3 beta.8
+- Vue 3, Vite, and Lucide
+- Desktop targets: macOS, Windows, and Linux
+- External runtime tools: `ffmpeg` and `ffprobe`
+- Built-in locales: English (`en`, default/fallback) and Turkish (`tr`)
 
-## Dosya haritası
+## File map
 
-- `app.go`: Wails API modelleri ve kullanıcı işlemleri
-- `main.go`: uygulama başlangıcı ve yetkili yerel medya sunucusu
-- `media_analysis.go`: MP4 analizi, thumbnail ve recent-store
-- `media_tools.go`: FFmpeg split/contact-sheet ve H.264 thumbnail decoder
-- `frontend/src/App.vue`: uygulama durumu, kullanıcı akışları ve template
-- `frontend/src/styles.css`: tüm görünüm ve bildirim stilleri
-- `main_test.go`: backend, FFmpeg hata mesajı ve medya entegrasyon testleri
-- `Taskfile.yml`, `build/`: Wails build/package görevleri
+- `app.go`: Wails API models, locale state, native dialogs, and user operations
+- `i18n.go`: backend English/Turkish message catalogs and locale fallback
+- `main.go`: application startup and authorised local media server
+- `media_analysis.go`: MP4 analysis, thumbnails, and recent-store logic
+- `media_tools.go`: FFmpeg split/contact-sheet logic and H.264 thumbnail decoder
+- `frontend/src/App.vue`: application state, user flows, and template
+- `frontend/src/i18n.js`: frontend locale list, catalogs, interpolation, and persistence
+- `frontend/scripts/check-i18n.mjs`: locale-list, key-parity, and non-empty-value validation
+- `frontend/src/styles.css`: visual styling, notifications, and language selector
+- `main_test.go`: backend, localization, FFmpeg errors, and media integration tests
+- `Taskfile.yml`, `build/`: Wails build/package tasks
 
-## Hızlı yönlendirme
+## Fast routing
 
-- Split veya contact sheet: önce `media_tools.go`, sonra ilgili `App.vue` handler'ı.
-- Hata bildirimi: `notify()` ve `.operation-notice`.
-- Medya yetkilendirmesi: `mediaServer.isAllowed`; yeni dosya işlemlerinde atlama.
-- Çıktılar kaynak videonun yanında, çakışmayan adla ve geçici dosyadan atomik taşıma ile oluşturulur.
-- `ffmpeg` komutlarını shell string'iyle değil `exec.Command` argümanlarıyla çalıştır.
+- Split or contact sheet: inspect `media_tools.go`, then the related `App.vue` handler.
+- Backend/native copy: update both catalogs in `i18n.go`.
+- Frontend copy: update both catalogs in `frontend/src/i18n.js`; do not hardcode it in components.
+- Notifications: inspect `notify()` and `.operation-notice`.
+- Media authorization: preserve `mediaServer.isAllowed` checks for new file operations.
+- Outputs are created beside the source with collision-free names and moved atomically from temporary files.
+- Run FFmpeg with `exec.Command` arguments, never with a shell command string.
 
-## Güncel davranış
+## Current behavior
 
-- Split yeniden kodlamaz; gerçek kesim zamanı ilk parçadan `ffprobe` ile ölçülür.
-- Contact sheet eşit aralıklı kareleri 4 sütunlu JPEG grid'e dönüştürür.
-- FFmpeg filtresi çalışma anında sorgulanır; Homebrew FFmpeg'de eksik olabilen `drawtext` opsiyoneldir.
-- FFmpeg bulunamazsa platforma göre kurulum komutları içeren Türkçe hata gösterilir.
-- Hata toast'ı 15 saniye kalır; ayrıntı sarılır, kaydırılır ve seçilebilir.
+- The selected locale is saved in local storage and synchronized to the Wails backend.
+- Unknown locale codes fall back to English.
+- Split does not re-encode; `ffprobe` measures the actual split time from the first part.
+- Contact sheets distribute frames evenly into a four-column JPEG grid.
+- FFmpeg filters are detected at runtime; `drawtext`, which may be absent in Homebrew FFmpeg, is optional.
+- Missing FFmpeg errors contain platform-specific installation commands in the active language.
+- Error notifications remain for 15 seconds; details wrap, scroll, and can be selected.
 
-## Çalışma ağacı
+## Working tree
 
-Depo kirli olabilir. `git status --short` ile kontrol et; kullanıcı değişikliklerini geri alma. Build çıktıları `bin/` ve `frontend/dist/` altında üretilir.
-
+The repository may be dirty. Check `git status --short` and never revert user changes. Build outputs are generated under `bin/` and `frontend/dist/`.

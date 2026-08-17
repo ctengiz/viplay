@@ -51,6 +51,10 @@ export function RecentVideos(): $CancellablePromise<$models.MediaItem[]> {
     });
 }
 
+export function SetLocale(locale: string): $CancellablePromise<string> {
+    return $Call.ByID(2991417501, locale);
+}
+
 export function SplitVideo(path: string, seconds: number): $CancellablePromise<$models.SplitResult> {
     return $Call.ByID(2078186822, path, seconds).then(($result: any) => {
         return $$createType3($result);

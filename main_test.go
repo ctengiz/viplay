@@ -21,7 +21,7 @@ func TestMediaServerRejectsUnauthorisedFile(t *testing.T) {
 }
 
 func TestMissingFFmpegHasInstallInstructions(t *testing.T) {
-	err := missingMediaToolError("ffmpeg")
+	err := missingMediaToolError("ffmpeg", "tr")
 	message := err.Error()
 	for _, expected := range []string{"FFmpeg bulunamadı", "brew install ffmpeg", "winget install Gyan.FFmpeg"} {
 		if !strings.Contains(message, expected) {
@@ -31,7 +31,7 @@ func TestMissingFFmpegHasInstallInstructions(t *testing.T) {
 }
 
 func TestMissingFFprobeExplainsIncompleteInstall(t *testing.T) {
-	err := missingMediaToolError("ffprobe")
+	err := missingMediaToolError("ffprobe", "tr")
 	if !strings.Contains(err.Error(), "ffprobe bulunamadı") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,11 +47,11 @@ func TestFFmpegFilterDetection(t *testing.T) {
 }
 
 func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
-	ffmpeg, err := requireMediaTool("ffmpeg")
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
 	if err != nil {
 		t.Skip("FFmpeg is not installed")
 	}
-	if _, err := requireMediaTool("ffprobe"); err != nil {
+	if _, err := requireMediaTool("ffprobe", "en"); err != nil {
 		t.Skip("ffprobe is not installed")
 	}
 	input := filepath.Join(t.TempDir(), "contact-sheet-source.mp4")
@@ -62,7 +62,7 @@ func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
 	).CombinedOutput(); err != nil {
 		t.Fatalf("test video creation failed: %v: %s", err, output)
 	}
-	output, err := extractContactSheet(input, 4, 160, 2)
+	output, err := extractContactSheet(input, 4, 160, 2, "en")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +72,35 @@ func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
 	}
 	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
 		t.Fatal("contact sheet is not a JPEG image")
+	}
+}
+
+func TestBackendLocalesHaveMatchingKeys(t *testing.T) {
+	for key := range backendMessages["en"] {
+		if backendMessages["tr"][key] == "" {
+			t.Errorf("Turkish catalog is missing %q", key)
+		}
+	}
+	for key := range backendMessages["tr"] {
+		if backendMessages["en"][key] == "" {
+			t.Errorf("English catalog is missing %q", key)
+		}
+	}
+}
+
+func TestUnsupportedLocaleFallsBackToEnglish(t *testing.T) {
+	if got := translate("de", "error.invalidSplitPoint"); got != backendMessages["en"]["error.invalidSplitPoint"] {
+		t.Fatalf("unexpected fallback: %q", got)
+	}
+}
+
+func TestAppLocaleSelection(t *testing.T) {
+	app := NewApp(newMediaServer())
+	if got := app.SetLocale("tr"); got != "tr" || app.tr("dialog.openVideo") != backendMessages["tr"]["dialog.openVideo"] {
+		t.Fatalf("Turkish locale was not applied: %q", got)
+	}
+	if got := app.SetLocale("unsupported"); got != "en" || app.tr("dialog.openVideo") != backendMessages["en"]["dialog.openVideo"] {
+		t.Fatalf("unsupported locale did not fall back to English: %q", got)
 	}
 }
 

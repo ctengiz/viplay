@@ -15,9 +15,7 @@ import (
 	"github.com/thesyncim/goh264"
 )
 
-const ffmpegInstallMessage = "FFmpeg bulunamadı. Bu işlem için FFmpeg'i sisteminize kurup uygulamayı yeniden başlatın. macOS: brew install ffmpeg · Windows: winget install Gyan.FFmpeg · Linux: paket yöneticinizden ffmpeg paketini kurun."
-
-func requireMediaTool(name string) (string, error) {
+func requireMediaTool(name, locale string) (string, error) {
 	path, err := exec.LookPath(name)
 	if err == nil {
 		return path, nil
@@ -30,27 +28,27 @@ func requireMediaTool(name string) (string, error) {
 			}
 		}
 	}
-	return "", missingMediaToolError(name)
+	return "", missingMediaToolError(name, locale)
 }
 
-func missingMediaToolError(name string) error {
+func missingMediaToolError(name, locale string) error {
 	if name == "ffprobe" {
-		return fmt.Errorf("FFmpeg kurulumu eksik: ffprobe bulunamadı. ffmpeg ve ffprobe komutlarının PATH içinde olduğundan emin olun; ardından uygulamayı yeniden başlatın")
+		return fmt.Errorf("%s", translate(locale, "error.ffprobeMissing"))
 	}
-	return fmt.Errorf("%s", ffmpegInstallMessage)
+	return fmt.Errorf("%s", translate(locale, "error.ffmpegMissing"))
 }
 
-func splitMP4(path string, seconds float64) (SplitResult, error) {
-	ffmpeg, err := requireMediaTool("ffmpeg")
+func splitMP4(path string, seconds float64, locale string) (SplitResult, error) {
+	ffmpeg, err := requireMediaTool("ffmpeg", locale)
 	if err != nil {
 		return SplitResult{}, err
 	}
-	duration, err := mediaDuration(path)
+	duration, err := mediaDuration(path, locale)
 	if err != nil {
 		return SplitResult{}, err
 	}
 	if seconds <= .05 || seconds >= duration-.05 {
-		return SplitResult{}, fmt.Errorf("bölme noktası videonun içinde olmalı")
+		return SplitResult{}, fmt.Errorf("%s", translate(locale, "error.invalidSplitPoint"))
 	}
 
 	dir := filepath.Dir(path)
@@ -77,14 +75,14 @@ func splitMP4(path string, seconds float64) (SplitResult, error) {
 		"-reset_timestamps", "1", pattern,
 	}
 	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
-		return SplitResult{}, mediaToolError("Video bölünemedi", runErr, output)
+		return SplitResult{}, mediaToolError(translate(locale, "error.splitFailed"), runErr, output)
 	}
 	tempFirst := filepath.Join(tempDir, "part_0"+ext)
 	tempSecond := filepath.Join(tempDir, "part_1"+ext)
 	if _, err := os.Stat(tempSecond); err != nil {
-		return SplitResult{}, fmt.Errorf("video bölünemedi: seçilen noktadan sonra ikinci bir bölüm oluşturulamadı")
+		return SplitResult{}, fmt.Errorf("%s", translate(locale, "error.secondPartMissing"))
 	}
-	actual, err := mediaDuration(tempFirst)
+	actual, err := mediaDuration(tempFirst, locale)
 	if err != nil {
 		return SplitResult{}, err
 	}
@@ -104,8 +102,8 @@ type ffprobeResult struct {
 	} `json:"format"`
 }
 
-func mediaDuration(path string) (float64, error) {
-	ffprobe, err := requireMediaTool("ffprobe")
+func mediaDuration(path, locale string) (float64, error) {
+	ffprobe, err := requireMediaTool("ffprobe", locale)
 	if err != nil {
 		return 0, err
 	}
@@ -114,34 +112,34 @@ func mediaDuration(path string) (float64, error) {
 		"-of", "json", path,
 	).CombinedOutput()
 	if runErr != nil {
-		return 0, mediaToolError("Video süresi okunamadı", runErr, output)
+		return 0, mediaToolError(translate(locale, "error.durationFailed"), runErr, output)
 	}
 	var result ffprobeResult
 	if err := json.Unmarshal(output, &result); err != nil {
-		return 0, fmt.Errorf("video süresi okunamadı: %w", err)
+		return 0, fmt.Errorf("%s: %w", translate(locale, "error.durationFailed"), err)
 	}
 	duration, err := strconv.ParseFloat(result.Format.Duration, 64)
 	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("video süresi okunamadı")
+		return 0, fmt.Errorf("%s", translate(locale, "error.durationFailed"))
 	}
 	return duration, nil
 }
 
-func extractContactSheet(path string, count, cellW, columns int) (string, error) {
-	ffmpeg, err := requireMediaTool("ffmpeg")
+func extractContactSheet(path string, count, cellW, columns int, locale string) (string, error) {
+	ffmpeg, err := requireMediaTool("ffmpeg", locale)
 	if err != nil {
 		return "", err
 	}
 	if count < 1 || count > 60 {
-		return "", fmt.Errorf("kare sayısı 1 ile 60 arasında olmalı")
+		return "", fmt.Errorf("%s", translate(locale, "error.frameCount"))
 	}
 	if cellW < 160 || cellW > 640 {
-		return "", fmt.Errorf("görsel genişliği 160 ile 640 piksel arasında olmalı")
+		return "", fmt.Errorf("%s", translate(locale, "error.imageWidth"))
 	}
 	if columns < 1 {
-		return "", fmt.Errorf("sütun sayısı en az 1 olmalı")
+		return "", fmt.Errorf("%s", translate(locale, "error.columns"))
 	}
-	duration, err := mediaDuration(path)
+	duration, err := mediaDuration(path, locale)
 	if err != nil {
 		return "", err
 	}
@@ -175,7 +173,7 @@ func extractContactSheet(path string, count, cellW, columns int) (string, error)
 		"-i", path, "-vf", filter, "-frames:v", "1", "-q:v", "2", tempPath,
 	}
 	if data, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
-		return "", mediaToolError("Contact sheet oluşturulamadı", runErr, data)
+		return "", mediaToolError(translate(locale, "error.contactSheetFailed"), runErr, data)
 	}
 	if err := os.Rename(tempPath, output); err != nil {
 		return "", err
@@ -242,11 +240,11 @@ func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 		}
 	}
 	if track == nil {
-		return nil, fmt.Errorf("video izi yok")
+		return nil, fmt.Errorf("%s", translate(defaultLocale, "error.videoTrackMissing"))
 	}
 	stbl := track.Mdia.Minf.Stbl
 	if stbl.Stsd.AvcX == nil || stbl.Stsd.AvcX.AvcC == nil {
-		return nil, fmt.Errorf("önizleme H.264 gerektiriyor")
+		return nil, fmt.Errorf("%s", translate(defaultLocale, "error.previewRequiresH264"))
 	}
 	target, err := stbl.Stts.GetSampleNrAtTime(uint64(seconds * float64(track.Mdia.Mdhd.Timescale)))
 	if err != nil {
@@ -281,5 +279,5 @@ func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 	if err == nil && len(frames) > 0 {
 		return frames[len(frames)-1], nil
 	}
-	return nil, fmt.Errorf("kare çözülemedi")
+	return nil, fmt.Errorf("%s", translate(defaultLocale, "error.frameDecode"))
 }

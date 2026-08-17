@@ -41,9 +41,20 @@ type App struct {
 	application *application.App
 	server      *mediaServer
 	recent      *recentStore
+	locale      localeState
 }
 
-func NewApp(server *mediaServer) *App { return &App{server: server, recent: newRecentStore()} }
+func NewApp(server *mediaServer) *App {
+	app := &App{server: server, recent: newRecentStore()}
+	app.locale.set(defaultLocale)
+	return app
+}
+
+func (a *App) SetLocale(locale string) string { return a.locale.set(locale) }
+
+func (a *App) tr(key string, args ...any) string {
+	return translate(a.locale.get(), key, args...)
+}
 
 func (a *App) mediaItem(path string) MediaItem {
 	abs := a.server.allow(path)
@@ -52,8 +63,8 @@ func (a *App) mediaItem(path string) MediaItem {
 
 func (a *App) OpenVideos() ([]MediaItem, error) {
 	paths, err := a.application.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
-		Title:   "Video aç",
-		Filters: []application.FileFilter{{DisplayName: "Video ve ses", Pattern: "*.mp4;*.m4v;*.mov;*.webm;*.mkv;*.avi;*.mp3;*.m4a;*.wav;*.flac"}},
+		Title:   a.tr("dialog.openVideo"),
+		Filters: []application.FileFilter{{DisplayName: a.tr("dialog.mediaFiles"), Pattern: "*.mp4;*.m4v;*.mov;*.webm;*.mkv;*.avi;*.mp3;*.m4a;*.wav;*.flac"}},
 	}).PromptForMultipleSelection()
 	if err != nil {
 		return nil, err
@@ -70,8 +81,8 @@ func (a *App) OpenVideos() ([]MediaItem, error) {
 
 func (a *App) OpenSubtitle() (MediaItem, error) {
 	path, err := a.application.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
-		Title:   "Altyazı aç",
-		Filters: []application.FileFilter{{DisplayName: "WebVTT altyazı", Pattern: "*.vtt"}},
+		Title:   a.tr("dialog.openSubtitle"),
+		Filters: []application.FileFilter{{DisplayName: a.tr("dialog.webvttSubtitle"), Pattern: "*.vtt"}},
 	}).PromptForSingleSelection()
 	if err != nil || path == "" {
 		return MediaItem{}, err
@@ -82,7 +93,7 @@ func (a *App) OpenSubtitle() (MediaItem, error) {
 
 func (a *App) DirectoryVideos(path string) ([]MediaItem, error) {
 	if !a.server.isAllowed(path) {
-		return nil, errors.New("media not authorised")
+		return nil, errors.New(a.tr("error.unauthorised"))
 	}
 	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil {
@@ -101,7 +112,7 @@ func (a *App) DirectoryVideos(path string) ([]MediaItem, error) {
 
 func (a *App) DeleteVideo(path string) error {
 	if !a.server.isAllowed(path) {
-		return errors.New("media not authorised")
+		return errors.New(a.tr("error.unauthorised"))
 	}
 	if err := os.Remove(path); err != nil {
 		return err
@@ -113,14 +124,14 @@ func (a *App) DeleteVideo(path string) error {
 
 func (a *App) ProbeMedia(path string) (MediaInfo, error) {
 	if !a.server.isAllowed(path) {
-		return MediaInfo{}, errors.New("media not authorised")
+		return MediaInfo{}, errors.New(a.tr("error.unauthorised"))
 	}
 	return probeMediaPureGo(path)
 }
 
 func (a *App) MarkPlayed(path string) error {
 	if !a.server.isAllowed(path) {
-		return errors.New("media not authorised")
+		return errors.New(a.tr("error.unauthorised"))
 	}
 	return a.recent.add(path)
 }
@@ -141,16 +152,16 @@ func (a *App) RecentVideos() ([]MediaItem, error) {
 
 func (a *App) SplitVideo(path string, seconds float64) (SplitResult, error) {
 	if !a.server.isAllowed(path) {
-		return SplitResult{}, errors.New("media not authorised")
+		return SplitResult{}, errors.New(a.tr("error.unauthorised"))
 	}
-	return splitMP4(path, seconds)
+	return splitMP4(path, seconds, a.locale.get())
 }
 
 func (a *App) ExtractContactSheet(path string, frameCount int, imageWidth int) (string, error) {
 	if !a.server.isAllowed(path) {
-		return "", errors.New("media not authorised")
+		return "", errors.New(a.tr("error.unauthorised"))
 	}
-	return extractContactSheet(path, frameCount, imageWidth, 4)
+	return extractContactSheet(path, frameCount, imageWidth, 4, a.locale.get())
 }
 
 func isSupportedMedia(name string) bool {

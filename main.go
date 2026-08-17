@@ -109,7 +109,7 @@ func main() {
 	service := NewApp(server)
 	app := application.New(application.Options{
 		Name:        "ViPlay",
-		Description: "Çok platformlu masaüstü video oynatıcı",
+		Description: "Cross-platform desktop video player",
 		Services:    []application.Service{application.NewService(service)},
 		Assets: application.AssetOptions{
 			Handler:    application.AssetFileServerFS(assets),
