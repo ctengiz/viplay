@@ -15,6 +15,7 @@
 - `i18n.go`: embedded catalog loading, validation, locale fallback, and payload creation
 - `main.go`: application startup and authorised local media server
 - `media_analysis.go`: MP4 analysis, thumbnails, and recent-store logic
+- `thumbnail_jobs.go`: sequential thumbnail generation state, pause/stop controls, and cache cleanup
 - `media_tools.go`: FFmpeg split/contact-sheet/transcode logic and H.264 thumbnail decoder
 - `frontend/src/App.vue`: application state, user flows, and template
 - `frontend/src/i18n.js`: dynamic backend catalog loading, interpolation, and preference persistence
@@ -40,6 +41,7 @@
 - Split does not re-encode; `ffprobe` measures the actual split time from the first part.
 - Contact sheets distribute frames evenly into a four-column JPEG grid.
 - Re-encoding recommends available HEVC/AV1 software encoders, writes Matroska, validates codec/duration/size, then removes the source.
+- Playlist thumbnails are generated sequentially with progress, cooperative pause/stop controls, and user-triggered cache cleanup.
 - FFmpeg filters are detected at runtime; `drawtext`, which may be absent in Homebrew FFmpeg, is optional.
 - Missing FFmpeg errors contain platform-specific installation commands in the active language.
 - Error notifications remain for 15 seconds; details wrap, scroll, and can be selected.

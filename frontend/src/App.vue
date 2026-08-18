@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Copy, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Clipboard, Window } from '@wailsio/runtime'
-import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SplitVideo, SplitVideoAtMarkers, TranscodeOptions, TranscodeVideo } from '../bindings/viplay/app'
+import { ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, OpenSubtitle, OpenVideos, PauseThumbnailGeneration, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeVideo } from '../bindings/viplay/app'
 import { loadLocale, locale, locales, t } from './i18n'
 
 const video = ref(null)
@@ -31,11 +31,17 @@ const libraryView = ref('folder')
 const processing = ref('')
 const notice = ref(null)
 const splitMarkers = ref([])
+const thumbnailProgress = ref({ active: false, paused: false, completed: 0, total: 0, current: '', completedPaths: [] })
+const thumbnailReady = ref({})
+const thumbnailRevision = ref(0)
 let noticeTimer
+let thumbnailPollTimer
+let thumbnailRun = 0
 const item = computed(() => queue.value[index.value])
 const progress = computed(() => `${duration.value ? current.value / duration.value * 100 : 0}%`)
 const markerPositions = computed(() => splitMarkers.value.map(seconds => ({ seconds, left: `${seconds / duration.value * 100}%` })))
 const volumeProgress = computed(() => `${volume.value * 100}%`)
+const thumbnailPercent = computed(() => thumbnailProgress.value.total ? `${thumbnailProgress.value.completed / thumbnailProgress.value.total * 100}%` : '0%')
 const speeds = [.5, .75, 1, 1.25, 1.5, 2]
 const sheetSizes = computed(() => [
   { label: t('sheet.size.small'), value: 240 },
@@ -237,6 +243,57 @@ function previous() { current.value > 3 ? seekBy(-current.value) : index.value >
 function title(name) { return name.replace(/\.[^/.]+$/, '') }
 function fileSize(value) { return value ? `${(value / 1024 / 1024).toFixed(1)} MB` : '—' }
 
+function applyThumbnailProgress(status) {
+  thumbnailProgress.value = status
+  thumbnailReady.value = Object.fromEntries((status.completedPaths || []).map(path => [path, true]))
+}
+
+async function refreshThumbnailProgress() {
+  applyThumbnailProgress(await ThumbnailGenerationStatus())
+  if (!thumbnailProgress.value.active) window.clearInterval(thumbnailPollTimer)
+}
+
+function startThumbnailQueue() {
+  const paths = queue.value.filter(entry => entry.kind === 'video').map(entry => entry.path)
+  const run = ++thumbnailRun
+  window.clearInterval(thumbnailPollTimer)
+  thumbnailReady.value = {}
+  if (!paths.length) {
+    thumbnailProgress.value = { active: false, paused: false, completed: 0, total: 0, current: '', completedPaths: [] }
+    return
+  }
+  thumbnailProgress.value = { active: true, paused: false, completed: 0, total: paths.length, current: '', completedPaths: [] }
+  thumbnailPollTimer = window.setInterval(() => { if (run === thumbnailRun) refreshThumbnailProgress() }, 200)
+  GenerateThumbnails(paths)
+    .catch(error => notify('error', t('thumbnails.errorTitle'), String(error)))
+    .finally(() => { if (run === thumbnailRun) refreshThumbnailProgress() })
+}
+
+async function toggleThumbnailPause() {
+  if (thumbnailProgress.value.paused) await ResumeThumbnailGeneration()
+  else await PauseThumbnailGeneration()
+  await refreshThumbnailProgress()
+}
+
+async function stopThumbnailQueue() {
+  ++thumbnailRun
+  window.clearInterval(thumbnailPollTimer)
+  await StopThumbnailGeneration()
+  await refreshThumbnailProgress()
+}
+
+async function clearThumbnails() {
+  ++thumbnailRun
+  window.clearInterval(thumbnailPollTimer)
+  try {
+    await ClearThumbnailCache()
+    thumbnailRevision.value++
+    thumbnailReady.value = {}
+    thumbnailProgress.value = { active: false, paused: false, completed: 0, total: 0, current: '', completedPaths: [] }
+    notify('success', t('thumbnails.clearedTitle'), t('thumbnails.cleared'))
+  } catch (error) { notify('error', t('thumbnails.clearErrorTitle'), String(error)) }
+}
+
 async function copyFullPath() {
   if (!item.value?.path) return
   try {
@@ -309,6 +366,7 @@ function onKey(event) {
 
 watch(speed, value => { if (video.value) video.value.playbackRate = value })
 watch(volume, value => { if (video.value) video.value.volume = value })
+watch(() => queue.value.map(entry => entry.path).join('\n'), startThumbnailQueue, { immediate: true })
 watch(item, async value => {
   splitMarkers.value = []
   mediaInfo.value = value ? await ProbeMedia(value.path) : null
@@ -319,7 +377,7 @@ async function changeLanguage(event) {
 onMounted(() => {
   window.addEventListener('keydown', onKey)
 })
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.clearTimeout(noticeTimer) })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.clearTimeout(noticeTimer); window.clearInterval(thumbnailPollTimer); StopThumbnailGeneration().catch(() => {}) })
 </script>
 
 <template>
@@ -400,11 +458,21 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
 
     <aside v-if="showQueue" class="queue">
       <div class="queue-head"><div><span>{{ t('queue.playlist') }}</span><strong>{{ t('queue.upNext') }}</strong></div><button class="icon-btn" :aria-label="t('queue.close')" @click="showQueue = false"><X :size="20" /></button></div>
+      <div v-if="queue.some(entry => entry.kind === 'video')" class="thumbnail-progress">
+        <div class="thumbnail-progress-head"><span><strong>{{ t('thumbnails.title') }}</strong><small v-if="thumbnailProgress.active">{{ thumbnailProgress.paused ? t('thumbnails.paused') : t('thumbnails.generating', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><small v-else-if="thumbnailProgress.total">{{ t('thumbnails.complete', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><small v-else>{{ t('thumbnails.cacheEmpty') }}</small></span><div>
+          <button v-if="thumbnailProgress.active" :aria-label="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" :title="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" @click="toggleThumbnailPause"><Play v-if="thumbnailProgress.paused" :size="14" /><Pause v-else :size="14" /></button>
+          <button v-if="thumbnailProgress.active" :aria-label="t('thumbnails.stop')" :title="t('thumbnails.stop')" @click="stopThumbnailQueue"><X :size="15" /></button>
+          <button v-else :aria-label="t('thumbnails.generate')" :title="t('thumbnails.generate')" @click="startThumbnailQueue"><RefreshCw :size="14" /></button>
+          <button :aria-label="t('thumbnails.clear')" :title="t('thumbnails.clear')" @click="clearThumbnails"><Trash2 :size="14" /></button>
+        </div></div>
+        <div class="thumbnail-progress-track"><i :style="{ width: thumbnailPercent }" /></div>
+        <small v-if="thumbnailProgress.active && thumbnailProgress.current" class="thumbnail-current" :title="thumbnailProgress.current">{{ thumbnailProgress.current }}</small>
+      </div>
       <div class="queue-list">
         <template v-if="queue.length">
           <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: i === index }" @click="select(i, true)">
             <span class="queue-number"><Speaker v-if="i === index" :size="15" /><template v-else>{{ String(i + 1).padStart(2, '0') }}</template></span>
-            <span class="thumb"><img v-if="entry.kind === 'video'" :src="entry.thumbnailUrl" alt="" loading="lazy" @error="$event.currentTarget.style.display = 'none'"><Film :size="22" /><i v-if="i === index && playing"><span /><span /><span /></i></span>
+            <span class="thumb"><img v-if="entry.kind === 'video' && thumbnailReady[entry.path]" :src="`${entry.thumbnailUrl}&v=${thumbnailRevision}`" alt="" loading="lazy" @error="$event.currentTarget.style.display = 'none'"><LoaderCircle v-else-if="entry.kind === 'video' && thumbnailProgress.active && !thumbnailReady[entry.path]" class="spin" :size="18" /><Film v-else :size="22" /><i v-if="i === index && playing"><span /><span /><span /></i></span>
             <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ entry.kind === 'audio' ? t('mediaInfo.audio') : t('queue.localVideo') }}</small></span><ChevronRight :size="16" />
           </button>
         </template>

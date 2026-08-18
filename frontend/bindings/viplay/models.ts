@@ -223,6 +223,51 @@ export class SplitResult {
     }
 }
 
+export class ThumbnailProgress {
+    "active": boolean;
+    "paused": boolean;
+    "completed": number;
+    "total": number;
+    "current": string;
+    "completedPaths": string[];
+
+    /** Creates a new ThumbnailProgress instance. */
+    constructor($$source: Partial<ThumbnailProgress> = {}) {
+        if (!("active" in $$source)) {
+            this["active"] = false;
+        }
+        if (!("paused" in $$source)) {
+            this["paused"] = false;
+        }
+        if (!("completed" in $$source)) {
+            this["completed"] = 0;
+        }
+        if (!("total" in $$source)) {
+            this["total"] = 0;
+        }
+        if (!("current" in $$source)) {
+            this["current"] = "";
+        }
+        if (!("completedPaths" in $$source)) {
+            this["completedPaths"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ThumbnailProgress instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ThumbnailProgress {
+        const $$createField5_0 = $$createType3;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("completedPaths" in $$parsedSource) {
+            $$parsedSource["completedPaths"] = $$createField5_0($$parsedSource["completedPaths"]);
+        }
+        return new ThumbnailProgress($$parsedSource as Partial<ThumbnailProgress>);
+    }
+}
+
 export class TranscodeOption {
     "id": string;
     "codec": string;

@@ -13,6 +13,7 @@ export {
     MediaItem,
     MultiSplitResult,
     SplitResult,
+    ThumbnailProgress,
     TranscodeOption,
     TranscodeResult
 } from "./models.js";

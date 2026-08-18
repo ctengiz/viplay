@@ -60,11 +60,12 @@ type App struct {
 	application *application.App
 	server      *mediaServer
 	recent      *recentStore
+	thumbnails  *thumbnailManager
 	locale      localeState
 }
 
 func NewApp(server *mediaServer) *App {
-	app := &App{server: server, recent: newRecentStore()}
+	app := &App{server: server, recent: newRecentStore(), thumbnails: newThumbnailManager()}
 	app.locale.set(defaultLocale)
 	return app
 }
@@ -190,6 +191,44 @@ func (a *App) ExtractContactSheet(path string, frameCount int, imageWidth int) (
 		return "", errors.New(a.tr("error.unauthorised"))
 	}
 	return extractContactSheet(path, frameCount, imageWidth, 4, a.locale.get())
+}
+
+func (a *App) GenerateThumbnails(paths []string) error {
+	videoPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if !a.server.isAllowed(path) {
+			return errors.New(a.tr("error.unauthorised"))
+		}
+		if mediaKind(path) == "video" {
+			videoPaths = append(videoPaths, path)
+		}
+	}
+	a.thumbnails.run(videoPaths, func(path string) error {
+		_, err := thumbnailFor(path)
+		return err
+	})
+	return nil
+}
+
+func (a *App) ThumbnailGenerationStatus() ThumbnailProgress {
+	return a.thumbnails.progress()
+}
+
+func (a *App) PauseThumbnailGeneration() {
+	a.thumbnails.pause()
+}
+
+func (a *App) ResumeThumbnailGeneration() {
+	a.thumbnails.resume()
+}
+
+func (a *App) StopThumbnailGeneration() {
+	a.thumbnails.stopAndWait()
+}
+
+func (a *App) ClearThumbnailCache() error {
+	a.thumbnails.stopAndWait()
+	return clearThumbnailCache()
 }
 
 func (a *App) TranscodeOptions(path string) ([]TranscodeOption, error) {

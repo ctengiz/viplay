@@ -9,7 +9,84 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func waitForThumbnailStatus(t *testing.T, manager *thumbnailManager, predicate func(ThumbnailProgress) bool) ThumbnailProgress {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		status := manager.progress()
+		if predicate(status) {
+			return status
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for thumbnail status")
+	return ThumbnailProgress{}
+}
+
+func TestThumbnailManagerPauseResumeAndStop(t *testing.T) {
+	manager := newThumbnailManager()
+	started := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	done := make(chan struct{})
+	go func() {
+		manager.run([]string{"first.mp4", "second.mp4"}, func(path string) error {
+			started <- path
+			<-release
+			return nil
+		})
+		close(done)
+	}()
+	if path := <-started; path != "first.mp4" {
+		t.Fatalf("unexpected first path: %q", path)
+	}
+	manager.pause()
+	release <- struct{}{}
+	waitForThumbnailStatus(t, manager, func(status ThumbnailProgress) bool { return status.Paused && status.Completed == 1 })
+	select {
+	case path := <-started:
+		t.Fatalf("second thumbnail started while paused: %q", path)
+	case <-time.After(30 * time.Millisecond):
+	}
+	manager.resume()
+	if path := <-started; path != "second.mp4" {
+		t.Fatalf("unexpected second path: %q", path)
+	}
+	stopDone := make(chan struct{})
+	go func() {
+		manager.stopAndWait()
+		close(stopDone)
+	}()
+	select {
+	case <-stopDone:
+		t.Fatal("stop returned before the active thumbnail finished")
+	case <-time.After(30 * time.Millisecond):
+	}
+	release <- struct{}{}
+	<-stopDone
+	<-done
+	if status := manager.progress(); status.Active || status.Paused {
+		t.Fatalf("unexpected stopped status: %#v", status)
+	}
+}
+
+func TestClearThumbnailCacheRemovesCacheDirectory(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "thumbnails")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "cached.jpg"), []byte("thumbnail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearThumbnailCacheAt(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cacheDir); !os.IsNotExist(err) {
+		t.Fatalf("cache directory still exists: %v", err)
+	}
+}
 
 func TestMediaServerRejectsUnauthorisedFile(t *testing.T) {
 	server := newMediaServer()

@@ -126,9 +126,8 @@ func thumbnailFor(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cache, _ := os.UserCacheDir()
 	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", path, stat.Size(), stat.ModTime().UnixNano())))
-	cachePath := filepath.Join(cache, "ViPlay", "thumbnails", hex.EncodeToString(hash[:])+".jpg")
+	cachePath := filepath.Join(thumbnailCacheDir(), hex.EncodeToString(hash[:])+".jpg")
 	if data, readErr := os.ReadFile(cachePath); readErr == nil {
 		return data, nil
 	}
