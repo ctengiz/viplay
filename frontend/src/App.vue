@@ -323,9 +323,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
           <button @click="openVideos"><FolderOpen :size="18" />{{ t('library.openVideo') }}</button>
           <small>{{ t('empty.formats') }}</small>
         </div>
-        <button v-if="item" class="center-play" :aria-label="playing ? t('player.pause') : t('player.play')" @click="toggle">
-          <Pause v-if="playing" :size="34" fill="currentColor" /><Play v-else :size="36" fill="currentColor" />
-        </button>
         <div class="bottom-fade" />
       </div>
 

@@ -126,7 +126,7 @@ func main() {
 		MinHeight:        640,
 		URL:              "/",
 		BackgroundColour: application.NewRGB(9, 10, 12),
-		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHiddenInset},
+		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHidden},
 	})
 	err := app.Run()
 	if err != nil {
