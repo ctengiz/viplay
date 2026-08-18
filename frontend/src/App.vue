@@ -1,8 +1,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
-import { Window } from '@wailsio/runtime'
-import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SplitVideo, SplitVideoAtMarkers } from '../bindings/viplay/app'
+import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Copy, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
+import { Clipboard, Window } from '@wailsio/runtime'
+import { DeleteVideo, DirectoryVideos, ExtractContactSheet, MarkPlayed, OpenSubtitle, OpenVideos, ProbeMedia, RecentVideos, SplitVideo, SplitVideoAtMarkers, TranscodeOptions, TranscodeVideo } from '../bindings/viplay/app'
 import { loadLocale, locale, locales, t } from './i18n'
 
 const video = ref(null)
@@ -21,6 +21,9 @@ const subtitle = ref(null)
 const showShortcuts = ref(false)
 const showSheetDialog = ref(false)
 const showDeleteDialog = ref(false)
+const showTranscodeDialog = ref(false)
+const transcodeOptions = ref([])
+const selectedTranscode = ref('')
 const sheetFrameCount = ref(12)
 const sheetImageWidth = ref(320)
 const mediaInfo = ref(null)
@@ -159,6 +162,40 @@ async function runContactSheet() {
   finally { processing.value = '' }
 }
 
+async function requestTranscode() {
+  if (!item.value || item.value.kind !== 'video') { notify('error', t('error.noVideoTitle'), t('transcode.noVideo')); return }
+  if (processing.value) { notify('error', t('delete.busyTitle'), t('delete.busy')); return }
+  processing.value = 'options'
+  try {
+    transcodeOptions.value = await TranscodeOptions(item.value.path)
+    if (!transcodeOptions.value.length) { notify('error', t('transcode.noOptionsTitle'), t('transcode.noOptions')); return }
+    selectedTranscode.value = transcodeOptions.value[0].id
+    showTranscodeDialog.value = true
+  } catch (error) { notify('error', t('transcode.errorTitle'), String(error)) }
+  finally { processing.value = '' }
+}
+
+async function runTranscode() {
+  if (!item.value || !selectedTranscode.value || processing.value) return
+  const source = item.value
+  const option = transcodeOptions.value.find(candidate => candidate.id === selectedTranscode.value)
+  if (!option) return
+  showTranscodeDialog.value = false
+  if (video.value && !video.value.paused) video.value.pause()
+  processing.value = 'transcode'
+  notify('progress', t('transcode.progressTitle'), t('transcode.progress', { codec: option.codec }))
+  await nextTick()
+  try {
+    const result = await TranscodeVideo(source.path, option.id)
+    queue.value.splice(index.value, 1, result.item)
+    current.value = 0
+    playing.value = false
+    subtitle.value = null
+    notify('success', t('transcode.successTitle'), t('transcode.success', { name: result.item.name, saved: fileSize(result.originalSize - result.outputSize) }))
+  } catch (error) { notify('error', t('transcode.errorTitle'), String(error)) }
+  finally { processing.value = '' }
+}
+
 async function openSubtitle() {
   const selected = await OpenSubtitle()
   if (selected?.url) subtitle.value = selected
@@ -199,6 +236,14 @@ function next() { if (index.value < queue.value.length - 1) select(index.value +
 function previous() { current.value > 3 ? seekBy(-current.value) : index.value > 0 && select(index.value - 1, true) }
 function title(name) { return name.replace(/\.[^/.]+$/, '') }
 function fileSize(value) { return value ? `${(value / 1024 / 1024).toFixed(1)} MB` : '—' }
+
+async function copyFullPath() {
+  if (!item.value?.path) return
+  try {
+    await Clipboard.SetText(item.value.path)
+    notify('success', t('pathCopy.successTitle'), item.value.path)
+  } catch (error) { notify('error', t('pathCopy.errorTitle'), String(error)) }
+}
 
 async function navigateDirectory(direction) {
   if (!item.value) return
@@ -243,11 +288,12 @@ function loaded(event) {
 }
 
 function onKey(event) {
+  if (event.key === 'Escape' && showTranscodeDialog.value) { showTranscodeDialog.value = false; return }
   if (event.key === 'Escape' && showDeleteDialog.value) { showDeleteDialog.value = false; return }
   if (!event.repeat && event.key === 'Enter' && showDeleteDialog.value) { event.preventDefault(); deleteCurrent(); return }
   if (event.key === 'Escape' && showSheetDialog.value) { showSheetDialog.value = false; return }
   if (event.key === 'Escape' && showShortcuts.value) { showShortcuts.value = false; return }
-  if (showDeleteDialog.value || showShortcuts.value) return
+  if (showDeleteDialog.value || showTranscodeDialog.value || showShortcuts.value) return
   if (['INPUT', 'BUTTON'].includes(document.activeElement?.tagName) && event.code === 'Space') return
   const player = video.value
   if (event.metaKey && event.code === 'ArrowRight') { event.preventDefault(); navigateDirectory(1); return }
@@ -303,11 +349,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
 
     <section class="player-shell">
       <header class="topbar">
-        <div><span class="eyebrow">{{ t('nowPlaying') }}</span><strong :title="item?.name">{{ item?.name || t('selectVideo') }}</strong></div>
+        <div><span class="eyebrow">{{ t('nowPlaying') }}</span><span class="topbar-file"><strong :title="item?.path || item?.name">{{ item?.name || t('selectVideo') }}</strong><button class="copy-path" :disabled="!item" :aria-label="t('pathCopy.action')" :title="t('pathCopy.action')" @click="copyFullPath"><Copy :size="14" /></button></span></div>
         <div class="topbar-actions">
           <label class="language-picker" :title="t('language.label')"><Languages :size="16" /><select :value="locale" :aria-label="t('language.label')" @change="changeLanguage"><option v-for="language in locales" :key="language.code" :value="language.code">{{ language.label }}</option></select><ChevronDown :size="12" /></label>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'split', marked: splitMarkers.length }" :aria-label="splitMarkers.length ? t('actions.multiSplit', { count: splitMarkers.length }) : t('actions.split')" :title="splitMarkers.length ? t('actions.multiSplitTitle', { count: splitMarkers.length }) : t('actions.splitTitle')" @click="splitAtMarkers"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /><span v-if="splitMarkers.length" class="marker-count">{{ splitMarkers.length }}</span></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" :aria-label="t('actions.contactSheet')" :title="t('actions.contactSheetTitle')" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
+          <button class="icon-btn operation-btn" :class="{ processing: processing === 'transcode' || processing === 'options' }" :disabled="!item || item.kind !== 'video' || !!processing" :aria-label="t('actions.transcode')" :title="t('actions.transcodeTitle')" @click="requestTranscode"><LoaderCircle v-if="processing === 'transcode' || processing === 'options'" class="spin" :size="20" /><RefreshCw v-else :size="19" /></button>
           <button class="icon-btn danger" :disabled="processing === 'delete'" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="requestDelete"><Trash2 :size="19" /></button>
           <button class="icon-btn" :class="{ active: showQueue }" :aria-label="t('actions.showQueue')" :title="t('actions.showQueue')" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
         </div>
@@ -393,6 +440,22 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
         <header><div><span>{{ t('delete.label') }}</span><strong>{{ t('delete.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showDeleteDialog = false"><X :size="20" /></button></header>
         <p>{{ t('delete.confirm', { name: item?.name }) }}</p>
         <footer><button class="cancel" @click="showDeleteDialog = false">{{ t('delete.cancel') }}</button><button class="confirm danger" autofocus @click="deleteCurrent"><Trash2 :size="17" />{{ t('delete.action') }}</button></footer>
+      </section>
+    </div>
+
+    <div v-if="showTranscodeDialog" class="shortcut-modal sheet-modal transcode-modal" role="dialog" aria-modal="true" :aria-label="t('transcode.title')" @click.self="showTranscodeDialog = false">
+      <section>
+        <header><div><span>{{ t('transcode.label') }}</span><strong>{{ t('transcode.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showTranscodeDialog = false"><X :size="20" /></button></header>
+        <p>{{ t('transcode.description', { name: item?.name }) }}</p>
+        <div class="transcode-options">
+          <label v-for="option in transcodeOptions" :key="option.id" :class="{ selected: selectedTranscode === option.id }">
+            <input v-model="selectedTranscode" type="radio" name="transcode-codec" :value="option.id">
+            <span><strong>{{ option.codec }}</strong><small>{{ t(`transcode.${option.id}.description`) }}</small></span>
+            <output>{{ t('transcode.estimatedSaving', { percent: option.estimatedSaving }) }}</output>
+          </label>
+        </div>
+        <div class="transcode-warning"><AlertCircle :size="17" /><span>{{ t('transcode.warning') }}</span></div>
+        <footer><button class="cancel" @click="showTranscodeDialog = false">{{ t('transcode.cancel') }}</button><button class="confirm" autofocus @click="runTranscode"><RefreshCw :size="17" />{{ t('transcode.confirm') }}</button></footer>
       </section>
     </div>
 

@@ -69,6 +69,18 @@ export function SplitVideoAtMarkers(path: string, seconds: number[]): $Cancellab
     });
 }
 
+export function TranscodeOptions(path: string): $CancellablePromise<$models.TranscodeOption[]> {
+    return $Call.ByID(3683531566, path).then(($result: any) => {
+        return $$createType7($result);
+    });
+}
+
+export function TranscodeVideo(path: string, optionID: string): $CancellablePromise<$models.TranscodeResult> {
+    return $Call.ByID(2627797619, path, optionID).then(($result: any) => {
+        return $$createType8($result);
+    });
+}
+
 // Private type creation functions
 const $$createType0 = $models.MediaItem.createFrom;
 const $$createType1 = $Create.Array($$createType0);
@@ -76,3 +88,6 @@ const $$createType2 = $models.LocalizationPayload.createFrom;
 const $$createType3 = $models.MediaInfo.createFrom;
 const $$createType4 = $models.SplitResult.createFrom;
 const $$createType5 = $models.MultiSplitResult.createFrom;
+const $$createType6 = $models.TranscodeOption.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = $models.TranscodeResult.createFrom;

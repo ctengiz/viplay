@@ -223,9 +223,80 @@ export class SplitResult {
     }
 }
 
+export class TranscodeOption {
+    "id": string;
+    "codec": string;
+    "encoder": string;
+    "estimatedSaving": number;
+    "outputExtension": string;
+
+    /** Creates a new TranscodeOption instance. */
+    constructor($$source: Partial<TranscodeOption> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("codec" in $$source)) {
+            this["codec"] = "";
+        }
+        if (!("encoder" in $$source)) {
+            this["encoder"] = "";
+        }
+        if (!("estimatedSaving" in $$source)) {
+            this["estimatedSaving"] = 0;
+        }
+        if (!("outputExtension" in $$source)) {
+            this["outputExtension"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new TranscodeOption instance from a string or object.
+     */
+    static createFrom($$source: any = {}): TranscodeOption {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new TranscodeOption($$parsedSource as Partial<TranscodeOption>);
+    }
+}
+
+export class TranscodeResult {
+    "item": MediaItem;
+    "originalSize": number;
+    "outputSize": number;
+
+    /** Creates a new TranscodeResult instance. */
+    constructor($$source: Partial<TranscodeResult> = {}) {
+        if (!("item" in $$source)) {
+            this["item"] = (new MediaItem());
+        }
+        if (!("originalSize" in $$source)) {
+            this["originalSize"] = 0;
+        }
+        if (!("outputSize" in $$source)) {
+            this["outputSize"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new TranscodeResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): TranscodeResult {
+        const $$createField0_0 = $$createType5;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("item" in $$parsedSource) {
+            $$parsedSource["item"] = $$createField0_0($$parsedSource["item"]);
+        }
+        return new TranscodeResult($$parsedSource as Partial<TranscodeResult>);
+    }
+}
+
 // Private type creation functions
 const $$createType0 = LocaleOption.createFrom;
 const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $Create.Map($Create.Any, $Create.Any);
 const $$createType3 = $Create.Array($Create.Any);
 const $$createType4 = $Create.Array($Create.Any);
+const $$createType5 = MediaItem.createFrom;

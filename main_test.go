@@ -47,6 +47,49 @@ func TestFFmpegFilterDetection(t *testing.T) {
 	}
 }
 
+func TestVideoEncoderDetection(t *testing.T) {
+	encoders := parseVideoEncoders(" V....D libx265 H.265 encoder\n V..... libsvtav1 AV1 encoder\n A..... aac AAC encoder")
+	if !encoders["libx265"] || !encoders["libsvtav1"] || encoders["aac"] {
+		t.Fatalf("unexpected encoders: %#v", encoders)
+	}
+}
+
+func TestTranscodeWithSystemFFmpeg(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	if _, err := requireMediaTool("ffprobe", "en"); err != nil {
+		t.Skip(err)
+	}
+	if !availableVideoEncoders(ffmpeg)["libx265"] {
+		t.Skip("libx265 is not available")
+	}
+	input := filepath.Join(t.TempDir(), "transcode-source.mp4")
+	if output, runErr := exec.Command(ffmpeg,
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=2:size=480x270:rate=24",
+		"-c:v", "mpeg4", "-q:v", "2", input,
+	).CombinedOutput(); runErr != nil {
+		t.Fatalf("test video creation failed: %v: %s", runErr, output)
+	}
+	result, err := transcodeVideoWithDelete(input, "hevc", "en", os.Remove)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(input); !os.IsNotExist(err) {
+		t.Fatal("original remained after successful transcode")
+	}
+	info, err := os.Stat(result.Item.Path)
+	if err != nil || info.Size() == 0 || result.OutputSize >= result.OriginalSize {
+		t.Fatalf("unexpected transcode result: %#v, stat=%v", result, err)
+	}
+	probe, err := probeWithFFprobe(result.Item.Path, "en")
+	if err != nil || firstVideoCodec(probe) != "hevc" {
+		t.Fatalf("unexpected output codec: %q, error=%v", firstVideoCodec(probe), err)
+	}
+}
+
 func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
 	ffmpeg, err := requireMediaTool("ffmpeg", "en")
 	if err != nil {
@@ -164,6 +207,28 @@ func TestMediaKind(t *testing.T) {
 	}
 	if got := mediaKind("movie.mp4"); got != "video" {
 		t.Fatalf("expected video, got %q", got)
+	}
+}
+
+func TestProbeMediaWithoutMovieBoxDoesNotPanic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "incomplete.mp4")
+	ftypOnly := []byte{
+		0, 0, 0, 24, 'f', 't', 'y', 'p',
+		'i', 's', 'o', 'm', 0, 0, 0, 0,
+		'i', 's', 'o', 'm', 'i', 's', 'o', '2',
+	}
+	if err := os.WriteFile(path, ftypOnly, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := probeMediaPureGo(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ProbeAvailable || info.Size != int64(len(ftypOnly)) || info.Container != "mp4" {
+		t.Fatalf("unexpected partial media info: %#v", info)
+	}
+	if _, err := thumbnailFor(path); err == nil {
+		t.Fatal("expected thumbnail generation for incomplete MP4 to fail safely")
 	}
 }
 

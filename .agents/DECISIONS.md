@@ -17,6 +17,8 @@ Update this file only when a decision changes. New entry format: `DNN · YYYY-MM
 - **D11 · 2026-08-17 · Repository prose is English-only.** Markdown, code comments, identifiers, and developer documentation remain English even when user instructions are Turkish; Turkish is valid inside translation catalogs.
 - **D12 · 2026-08-18 · Deletion prefers the native macOS Trash and falls back to permanent removal.** Files on mounted volumes use that volume's `.Trashes` directory when available; unsupported or read-only Trash locations must not prevent deletion.
 - **D13 · 2026-08-18 · Multi-split uses one FFmpeg segment operation for all markers.** Outputs retain the source container, use stream-copy, and follow the existing nearest-keyframe behavior without quality loss.
+- **D14 · 2026-08-19 · ViPlay terminates when its last window closes on macOS.** ViPlay is a single-window application, so closing the main window with Command-W must not leave a headless process running.
+- **D15 · 2026-08-19 · Re-encoding offers only locally available, more efficient codecs.** ViPlay detects FFmpeg's software HEVC and AV1 encoders, uses quality-targeted settings, copies non-video streams into Matroska, and deletes the source only after the output is smaller and passes codec and duration validation.
 
 ## Superseding a decision
 

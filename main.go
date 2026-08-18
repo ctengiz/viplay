@@ -110,7 +110,10 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "ViPlay",
 		Description: "Cross-platform desktop video player",
-		Services:    []application.Service{application.NewService(service)},
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+		Services: []application.Service{application.NewService(service)},
 		Assets: application.AssetOptions{
 			Handler:    application.AssetFileServerFS(assets),
 			Middleware: server.middleware,

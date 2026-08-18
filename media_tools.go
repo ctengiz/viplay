@@ -188,23 +188,217 @@ type ffprobeResult struct {
 	Format struct {
 		Duration string `json:"duration"`
 	} `json:"format"`
+	Streams []struct {
+		CodecName string `json:"codec_name"`
+		CodecType string `json:"codec_type"`
+	} `json:"streams"`
 }
 
-func mediaDuration(path, locale string) (float64, error) {
+type transcodeProfile struct {
+	option TranscodeOption
+	args   []string
+}
+
+var transcodeProfiles = []transcodeProfile{
+	{option: TranscodeOption{ID: "hevc", Codec: "HEVC / H.265", EstimatedSaving: 35, OutputExtension: ".mkv"}, args: []string{"-preset", "medium", "-crf", "24"}},
+	{option: TranscodeOption{ID: "av1", Codec: "AV1", EstimatedSaving: 50, OutputExtension: ".mkv"}, args: []string{"-preset", "6", "-crf", "30"}},
+}
+
+func transcodeOptions(path, locale string) ([]TranscodeOption, error) {
+	ffmpeg, err := requireMediaTool("ffmpeg", locale)
+	if err != nil {
+		return nil, err
+	}
+	probe, err := probeWithFFprobe(path, locale)
+	if err != nil {
+		return nil, err
+	}
+	currentCodec := firstVideoCodec(probe)
+	if currentCodec == "" {
+		return nil, fmt.Errorf("%s", translate(locale, "error.videoTrackMissing"))
+	}
+	encoders := availableVideoEncoders(ffmpeg)
+	options := make([]TranscodeOption, 0, len(transcodeProfiles))
+	for _, profile := range transcodeProfiles {
+		if (profile.option.ID == "hevc" && (currentCodec == "hevc" || currentCodec == "h265" || currentCodec == "av1")) || (profile.option.ID == "av1" && currentCodec == "av1") {
+			continue
+		}
+		encoder := preferredEncoder(profile.option.ID, encoders)
+		if encoder == "" {
+			continue
+		}
+		option := profile.option
+		option.Encoder = encoder
+		options = append(options, option)
+	}
+	return options, nil
+}
+
+func transcodeVideo(path, optionID, locale string) (TranscodeResult, error) {
+	return transcodeVideoWithDelete(path, optionID, locale, deleteFile)
+}
+
+func transcodeVideoWithDelete(path, optionID, locale string, removeOriginal func(string) error) (TranscodeResult, error) {
+	options, err := transcodeOptions(path, locale)
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	var selected *TranscodeOption
+	for i := range options {
+		if options[i].ID == optionID {
+			selected = &options[i]
+			break
+		}
+	}
+	if selected == nil {
+		return TranscodeResult{}, fmt.Errorf("%s", translate(locale, "error.transcodeOptionUnavailable"))
+	}
+	ffmpeg, _ := requireMediaTool("ffmpeg", locale)
+	originalInfo, err := os.Stat(path)
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	dir := filepath.Dir(path)
+	base := strings.TrimSuffix(path, filepath.Ext(path)) + "_" + selected.ID
+	outputPath := availableOutput(base, selected.OutputExtension)
+	temp, err := os.CreateTemp(dir, ".viplay-transcode-*"+selected.OutputExtension)
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	tempPath := temp.Name()
+	if err := temp.Close(); err != nil {
+		return TranscodeResult{}, err
+	}
+	_ = os.Remove(tempPath)
+	defer os.Remove(tempPath)
+
+	profile := profileByID(selected.ID)
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?", "-map", "0:s?", "-map_metadata", "0", "-map_chapters", "0", "-c", "copy", "-c:v", selected.Encoder}
+	args = append(args, profile.args...)
+	args = append(args, tempPath)
+	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+		return TranscodeResult{}, mediaToolError(translate(locale, "error.transcodeFailed"), runErr, output)
+	}
+	if err := validateTranscode(path, tempPath, selected.ID, originalInfo.Size(), locale); err != nil {
+		return TranscodeResult{}, err
+	}
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return TranscodeResult{}, err
+	}
+	outputInfo, err := os.Stat(outputPath)
+	if err != nil {
+		_ = os.Remove(outputPath)
+		return TranscodeResult{}, err
+	}
+	if err := removeOriginal(path); err != nil {
+		_ = os.Remove(outputPath)
+		return TranscodeResult{}, fmt.Errorf("%s: %w", translate(locale, "error.transcodeOriginalDeleteFailed"), err)
+	}
+	return TranscodeResult{Item: MediaItem{Path: outputPath}, OriginalSize: originalInfo.Size(), OutputSize: outputInfo.Size()}, nil
+}
+
+func profileByID(id string) transcodeProfile {
+	for _, profile := range transcodeProfiles {
+		if profile.option.ID == id {
+			return profile
+		}
+	}
+	return transcodeProfile{}
+}
+
+func availableVideoEncoders(ffmpeg string) map[string]bool {
+	output, err := exec.Command(ffmpeg, "-hide_banner", "-encoders").CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	return parseVideoEncoders(string(output))
+}
+
+func parseVideoEncoders(output string) map[string]bool {
+	result := make(map[string]bool)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.HasPrefix(fields[0], "V") {
+			result[fields[1]] = true
+		}
+	}
+	return result
+}
+
+func preferredEncoder(codec string, encoders map[string]bool) string {
+	var candidates []string
+	switch codec {
+	case "hevc":
+		candidates = []string{"libx265"}
+	case "av1":
+		candidates = []string{"libsvtav1"}
+	}
+	for _, candidate := range candidates {
+		if encoders[candidate] {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func probeWithFFprobe(path, locale string) (ffprobeResult, error) {
 	ffprobe, err := requireMediaTool("ffprobe", locale)
 	if err != nil {
-		return 0, err
+		return ffprobeResult{}, err
 	}
-	output, runErr := exec.Command(ffprobe,
-		"-v", "error", "-show_entries", "format=duration",
-		"-of", "json", path,
-	).CombinedOutput()
+	output, runErr := exec.Command(ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type", "-of", "json", path).CombinedOutput()
 	if runErr != nil {
-		return 0, mediaToolError(translate(locale, "error.durationFailed"), runErr, output)
+		return ffprobeResult{}, mediaToolError(translate(locale, "error.durationFailed"), runErr, output)
 	}
 	var result ffprobeResult
 	if err := json.Unmarshal(output, &result); err != nil {
-		return 0, fmt.Errorf("%s: %w", translate(locale, "error.durationFailed"), err)
+		return ffprobeResult{}, fmt.Errorf("%s: %w", translate(locale, "error.durationFailed"), err)
+	}
+	return result, nil
+}
+
+func firstVideoCodec(result ffprobeResult) string {
+	for _, stream := range result.Streams {
+		if stream.CodecType == "video" {
+			return strings.ToLower(stream.CodecName)
+		}
+	}
+	return ""
+}
+
+func validateTranscode(source, output, codec string, sourceSize int64, locale string) error {
+	info, err := os.Stat(output)
+	if err != nil || info.Size() == 0 {
+		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
+	}
+	if info.Size() >= sourceSize {
+		return fmt.Errorf("%s", translate(locale, "error.transcodeNotSmaller"))
+	}
+	sourceProbe, err := probeWithFFprobe(source, locale)
+	if err != nil {
+		return err
+	}
+	outputProbe, err := probeWithFFprobe(output, locale)
+	if err != nil {
+		return err
+	}
+	wantCodec := map[string]string{"hevc": "hevc", "av1": "av1"}[codec]
+	if firstVideoCodec(outputProbe) != wantCodec {
+		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
+	}
+	sourceDuration, sourceErr := strconv.ParseFloat(sourceProbe.Format.Duration, 64)
+	outputDuration, outputErr := strconv.ParseFloat(outputProbe.Format.Duration, 64)
+	tolerance := math.Max(2, sourceDuration*.01)
+	if sourceErr != nil || outputErr != nil || sourceDuration <= 0 || math.Abs(sourceDuration-outputDuration) > tolerance {
+		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
+	}
+	return nil
+}
+
+func mediaDuration(path, locale string) (float64, error) {
+	result, err := probeWithFFprobe(path, locale)
+	if err != nil {
+		return 0, err
 	}
 	duration, err := strconv.ParseFloat(result.Format.Duration, 64)
 	if err != nil || duration <= 0 {
@@ -313,16 +507,19 @@ func availableOutput(base, ext string) string {
 }
 
 // decodeH264FrameAt is retained for the lightweight in-app thumbnail cache.
-// User-triggered split and contact-sheet operations use the system FFmpeg.
+// User-triggered split, contact-sheet, and transcoding operations use the system FFmpeg.
 func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 	f, parsed, err := decodeMP4(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	if parsed.Moov == nil {
+		return nil, fmt.Errorf("%s", translate(defaultLocale, "error.videoTrackMissing"))
+	}
 	var track *mp4.TrakBox
 	for _, t := range parsed.Moov.Traks {
-		if t.Mdia.Hdlr.HandlerType == "vide" {
+		if t != nil && t.Mdia != nil && t.Mdia.Hdlr != nil && t.Mdia.Minf != nil && t.Mdia.Minf.Stbl != nil && t.Mdia.Minf.Stbl.Stsd != nil && t.Mdia.Minf.Stbl.Stts != nil && t.Mdia.Minf.Stbl.Stsz != nil && t.Mdia.Mdhd != nil && t.Mdia.Mdhd.Timescale > 0 && t.Mdia.Hdlr.HandlerType == "vide" {
 			track = t
 			break
 		}

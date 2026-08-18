@@ -42,6 +42,20 @@ type MultiSplitResult struct {
 	SplitTimes []float64 `json:"splitTimes"`
 }
 
+type TranscodeOption struct {
+	ID              string `json:"id"`
+	Codec           string `json:"codec"`
+	Encoder         string `json:"encoder"`
+	EstimatedSaving int    `json:"estimatedSaving"`
+	OutputExtension string `json:"outputExtension"`
+}
+
+type TranscodeResult struct {
+	Item         MediaItem `json:"item"`
+	OriginalSize int64     `json:"originalSize"`
+	OutputSize   int64     `json:"outputSize"`
+}
+
 type App struct {
 	application *application.App
 	server      *mediaServer
@@ -176,6 +190,27 @@ func (a *App) ExtractContactSheet(path string, frameCount int, imageWidth int) (
 		return "", errors.New(a.tr("error.unauthorised"))
 	}
 	return extractContactSheet(path, frameCount, imageWidth, 4, a.locale.get())
+}
+
+func (a *App) TranscodeOptions(path string) ([]TranscodeOption, error) {
+	if !a.server.isAllowed(path) {
+		return nil, errors.New(a.tr("error.unauthorised"))
+	}
+	return transcodeOptions(path, a.locale.get())
+}
+
+func (a *App) TranscodeVideo(path string, optionID string) (TranscodeResult, error) {
+	if !a.server.isAllowed(path) {
+		return TranscodeResult{}, errors.New(a.tr("error.unauthorised"))
+	}
+	result, err := transcodeVideo(path, optionID, a.locale.get())
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	a.server.disallow(path)
+	result.Item = a.mediaItem(result.Item.Path)
+	a.recent.replace(path, result.Item.Path)
+	return result, nil
 }
 
 func isSupportedMedia(name string) bool {

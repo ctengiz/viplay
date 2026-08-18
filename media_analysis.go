@@ -33,13 +33,16 @@ func probeMediaPureGo(path string) (MediaInfo, error) {
 		return result, nil
 	}
 	defer f.Close()
+	if parsed.Moov == nil {
+		return result, nil
+	}
 	result.ProbeAvailable = true
 	result.Container = "mp4/mov"
-	if parsed.Moov != nil && parsed.Moov.Mvhd != nil && parsed.Moov.Mvhd.Timescale > 0 {
+	if parsed.Moov.Mvhd != nil && parsed.Moov.Mvhd.Timescale > 0 {
 		result.Duration = float64(parsed.Moov.Mvhd.Duration) / float64(parsed.Moov.Mvhd.Timescale)
 	}
 	for _, track := range parsed.Moov.Traks {
-		if track.Mdia == nil || track.Mdia.Hdlr == nil || track.Mdia.Minf == nil || track.Mdia.Minf.Stbl == nil {
+		if track == nil || track.Mdia == nil || track.Mdia.Hdlr == nil || track.Mdia.Minf == nil || track.Mdia.Minf.Stbl == nil {
 			continue
 		}
 		stsd := track.Mdia.Minf.Stbl.Stsd
@@ -51,7 +54,7 @@ func probeMediaPureGo(path string) (MediaInfo, error) {
 			entry, codec := videoEntry(stsd)
 			if result.VideoCodec == "" && entry != nil {
 				result.VideoCodec, result.Width, result.Height = codec, int(entry.Width), int(entry.Height)
-				if track.Mdia.Mdhd != nil && track.Mdia.Mdhd.Duration > 0 {
+				if track.Mdia.Mdhd != nil && track.Mdia.Mdhd.Duration > 0 && track.Mdia.Minf.Stbl.Stsz != nil {
 					fps := float64(track.GetNrSamples()) * float64(track.Mdia.Mdhd.Timescale) / float64(track.Mdia.Mdhd.Duration)
 					result.FPS = fmt.Sprintf("%.3g", fps)
 				}
@@ -241,6 +244,31 @@ func (r *recentStore) remove(path string) {
 		}
 	}
 	_ = r.write(next)
+}
+func (r *recentStore) replace(oldPath, newPath string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	oldAbs, _ := filepath.Abs(oldPath)
+	newAbs, _ := filepath.Abs(newPath)
+	paths := r.read()
+	next := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == oldAbs {
+			p = newAbs
+		}
+		if p != "" && !containsPath(next, p) {
+			next = append(next, p)
+		}
+	}
+	_ = r.write(next)
+}
+func containsPath(paths []string, path string) bool {
+	for _, candidate := range paths {
+		if candidate == path {
+			return true
+		}
+	}
+	return false
 }
 func (r *recentStore) list() ([]string, error) {
 	r.mu.Lock()
