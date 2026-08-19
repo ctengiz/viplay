@@ -7,7 +7,7 @@ ViPlay is a cross-platform desktop video player built with Go, Wails v3, and Vue
 - Go 1.24+
 - Node.js 20+
 - Wails platform dependencies: https://wails.io/docs/gettingstarted/installation
-- System-installed `ffmpeg` and `ffprobe` for video splitting and contact sheets
+- System-installed `ffmpeg` and `ffprobe` for legacy MPG/FLV playback, video splitting, contact sheets, and re-encoding
 
 FFmpeg is not bundled with the application. Install it with `brew install ffmpeg` on macOS, `winget install Gyan.FFmpeg` on Windows, or the distribution package manager on Linux. Restart ViPlay after installation.
 
@@ -43,6 +43,7 @@ Every user-facing feature must include matching English and Turkish translation 
 
 - Multi-file local playback queue
 - Play/pause, seeking, previous/next navigation, playback speed, volume, and fullscreen
+- MPG, MPEG, and FLV playback through cached FFmpeg-generated compatibility proxies
 - WebVTT subtitle loading
 - Keyboard shortcuts: `Space`, `←`, `→`, `F`, `M`, `⌘←` / `⌘→` for folder navigation, and `Del` / `⌘⌫` for disk deletion
 - Lossless FFmpeg stream-copy splitting at keyframes

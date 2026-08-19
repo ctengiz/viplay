@@ -17,6 +17,7 @@
 - `media_analysis.go`: MP4 analysis, thumbnails, and recent-store logic
 - `thumbnail_jobs.go`: sequential thumbnail generation state, pause/stop controls, and cache cleanup
 - `media_tools.go`: FFmpeg split/contact-sheet/transcode logic and H.264 thumbnail decoder
+- `playback.go`: cached FFmpeg playback proxies for legacy MPG/MPEG and FLV containers
 - `frontend/src/App.vue`: application state, user flows, and template
 - `frontend/src/i18n.js`: dynamic backend catalog loading, interpolation, and preference persistence
 - `frontend/scripts/check-i18n.mjs`: embedded JSON key-parity, usage, and non-empty-value validation

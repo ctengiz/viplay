@@ -2,13 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Copy, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Clipboard, Window } from '@wailsio/runtime'
-import { ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, OpenSubtitle, OpenVideos, PauseThumbnailGeneration, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeVideo } from '../bindings/viplay/app'
+import { ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, OpenSubtitle, OpenVideos, PauseThumbnailGeneration, PreparePlayback, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeVideo } from '../bindings/viplay/app'
 import { loadLocale, locale, locales, t } from './i18n'
 
 const video = ref(null)
 const queue = ref([])
 const index = ref(0)
 const playing = ref(false)
+const playbackURL = ref('')
+const playbackPreparing = ref(false)
 const current = ref(0)
 const duration = ref(0)
 const volume = ref(.75)
@@ -37,6 +39,8 @@ const thumbnailRevision = ref(0)
 let noticeTimer
 let thumbnailPollTimer
 let thumbnailRun = 0
+let playbackRun = 0
+let autoplayOnReady = false
 const item = computed(() => queue.value[index.value])
 const progress = computed(() => `${duration.value ? current.value / duration.value * 100 : 0}%`)
 const markerPositions = computed(() => splitMarkers.value.map(seconds => ({ seconds, left: `${seconds / duration.value * 100}%` })))
@@ -231,12 +235,10 @@ async function fullscreen() {
 async function select(i, autoplay = false) {
   index.value = i
   playing.value = false
+  playbackURL.value = ''
+  autoplayOnReady = autoplay
   current.value = 0
   subtitle.value = null
-  if (autoplay) {
-    await nextTick()
-    try { await video.value?.play() } catch { /* Playback remains available through the user controls. */ }
-  }
 }
 function next() { if (index.value < queue.value.length - 1) select(index.value + 1, true) }
 function previous() { current.value > 3 ? seekBy(-current.value) : index.value > 0 && select(index.value - 1, true) }
@@ -369,7 +371,31 @@ watch(volume, value => { if (video.value) video.value.volume = value })
 watch(() => queue.value.map(entry => entry.path).join('\n'), startThumbnailQueue, { immediate: true })
 watch(item, async value => {
   splitMarkers.value = []
+  const run = ++playbackRun
+  const shouldAutoplay = autoplayOnReady
+  autoplayOnReady = false
+  playbackURL.value = ''
+  playbackPreparing.value = !!value
   mediaInfo.value = value ? await ProbeMedia(value.path) : null
+  if (!value) { playbackPreparing.value = false; return }
+  if (run !== playbackRun) return
+  const legacyFormat = /\.(mpg|mpeg|flv)$/i.test(value.path)
+  if (legacyFormat) notify('progress', t('playback.preparingTitle'), t('playback.preparing', { name: value.name }))
+  try {
+    const url = await PreparePlayback(value.path)
+    if (run !== playbackRun) return
+    playbackURL.value = url
+    playbackPreparing.value = false
+    if (legacyFormat && notice.value?.type === 'progress') notice.value = null
+    if (shouldAutoplay) {
+      await nextTick()
+      try { await video.value?.play() } catch { /* Playback remains available through the user controls. */ }
+    }
+  } catch (error) {
+    if (run !== playbackRun) return
+    playbackPreparing.value = false
+    notify('error', t('playback.errorTitle'), String(error))
+  }
 }, { immediate: true })
 async function changeLanguage(event) {
   await loadLocale(event.target.value)
@@ -419,9 +445,10 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
       </header>
 
       <div class="stage" @dblclick="fullscreen">
-        <video v-if="item" :key="item.url" ref="video" :src="item.url" :muted="muted" @click="toggle" @play="markPlayed" @pause="playing = false" @timeupdate="current = $event.currentTarget.currentTime" @loadedmetadata="loaded" @ended="next">
+        <video v-if="item" :key="playbackURL" ref="video" :src="playbackURL || undefined" :muted="muted" @click="toggle" @play="markPlayed" @pause="playing = false" @timeupdate="current = $event.currentTarget.currentTime" @loadedmetadata="loaded" @ended="next">
           <track v-if="subtitle" default kind="subtitles" :src="subtitle.url" srcLang="tr" :label="subtitle.name">
         </video>
+        <div v-if="item && playbackPreparing" class="playback-preparing"><LoaderCircle class="spin" :size="30" /><span>{{ t('playback.preparingTitle') }}</span></div>
         <div v-else class="empty-state">
           <div class="empty-icon"><Film :size="42" /></div>
           <h1>{{ t('empty.title') }}</h1><p>{{ t('empty.description') }}</p>

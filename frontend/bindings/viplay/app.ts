@@ -57,6 +57,10 @@ export function PauseThumbnailGeneration(): $CancellablePromise<void> {
     return $Call.ByID(3891602989);
 }
 
+export function PreparePlayback(path: string): $CancellablePromise<string> {
+    return $Call.ByID(1688424733, path);
+}
+
 export function ProbeMedia(path: string): $CancellablePromise<$models.MediaInfo> {
     return $Call.ByID(614641911, path).then(($result: any) => {
         return $$createType3($result);

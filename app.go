@@ -86,7 +86,7 @@ func (a *App) mediaItem(path string) MediaItem {
 func (a *App) OpenVideos() ([]MediaItem, error) {
 	paths, err := a.application.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title:   a.tr("dialog.openVideo"),
-		Filters: []application.FileFilter{{DisplayName: a.tr("dialog.mediaFiles"), Pattern: "*.mp4;*.m4v;*.mov;*.webm;*.mkv;*.avi;*.mp3;*.m4a;*.wav;*.flac"}},
+		Filters: []application.FileFilter{{DisplayName: a.tr("dialog.mediaFiles"), Pattern: "*.mp4;*.m4v;*.mov;*.webm;*.mkv;*.avi;*.mpg;*.mpeg;*.flv;*.mp3;*.m4a;*.wav;*.flac"}},
 	}).PromptForMultipleSelection()
 	if err != nil {
 		return nil, err
@@ -149,6 +149,18 @@ func (a *App) ProbeMedia(path string) (MediaInfo, error) {
 		return MediaInfo{}, errors.New(a.tr("error.unauthorised"))
 	}
 	return probeMediaPureGo(path)
+}
+
+func (a *App) PreparePlayback(path string) (string, error) {
+	if !a.server.isAllowed(path) {
+		return "", errors.New(a.tr("error.unauthorised"))
+	}
+	playbackPath, err := preparePlaybackFile(path, a.locale.get())
+	if err != nil {
+		return "", err
+	}
+	abs := a.server.allow(playbackPath)
+	return "/media?path=" + url.QueryEscape(abs), nil
 }
 
 func (a *App) MarkPlayed(path string) error {
@@ -254,7 +266,7 @@ func (a *App) TranscodeVideo(path string, optionID string) (TranscodeResult, err
 
 func isSupportedMedia(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".mp3", ".m4a", ".wav", ".flac":
+	case ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".mpg", ".mpeg", ".flv", ".mp3", ".m4a", ".wav", ".flac":
 		return true
 	default:
 		return false

@@ -287,6 +287,59 @@ func TestMediaKind(t *testing.T) {
 	}
 }
 
+func TestLegacyVideoFormatsAreSupportedAndRequirePlaybackProxy(t *testing.T) {
+	for _, name := range []string{"movie.mpg", "movie.MPEG", "movie.flv"} {
+		if !isSupportedMedia(name) || mediaKind(name) != "video" || !requiresPlaybackProxy(name) {
+			t.Fatalf("legacy video format is not fully supported: %q", name)
+		}
+	}
+	if requiresPlaybackProxy("movie.mp4") {
+		t.Fatal("MP4 unexpectedly requires a playback proxy")
+	}
+}
+
+func TestPrepareLegacyPlaybackWithSystemFFmpeg(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	if !availableVideoEncoders(ffmpeg)["libx264"] {
+		t.Skip("libx264 is not available")
+	}
+	tests := []struct {
+		ext    string
+		codec  string
+		format string
+	}{
+		{ext: ".mpg", codec: "mpeg2video", format: "mpeg"},
+		{ext: ".flv", codec: "flv", format: "flv"},
+	}
+	for _, test := range tests {
+		t.Run(test.ext, func(t *testing.T) {
+			root := t.TempDir()
+			input := filepath.Join(root, "source"+test.ext)
+			if output, runErr := exec.Command(ffmpeg,
+				"-hide_banner", "-loglevel", "error", "-y",
+				"-f", "lavfi", "-i", "testsrc2=duration=1:size=160x90:rate=12",
+				"-an", "-c:v", test.codec, "-f", test.format, input,
+			).CombinedOutput(); runErr != nil {
+				t.Fatalf("create synthetic %s video: %v: %s", test.ext, runErr, output)
+			}
+			playbackPath, err := preparePlaybackFileAt(input, "en", filepath.Join(root, "cache"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(playbackPath)
+			if err != nil || info.Size() == 0 || filepath.Ext(playbackPath) != ".mp4" {
+				t.Fatalf("invalid playback proxy %q: %v", playbackPath, err)
+			}
+			if second, err := preparePlaybackFileAt(input, "en", filepath.Join(root, "cache")); err != nil || second != playbackPath {
+				t.Fatalf("playback proxy was not reused: %q, %v", second, err)
+			}
+		})
+	}
+}
+
 func TestProbeMediaWithoutMovieBoxDoesNotPanic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "incomplete.mp4")
 	ftypOnly := []byte{
