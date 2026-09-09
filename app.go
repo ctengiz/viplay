@@ -136,6 +136,7 @@ func (a *App) DeleteVideo(path string) error {
 	if !a.server.isAllowed(path) {
 		return errors.New(a.tr("error.unauthorised"))
 	}
+	_ = removeThumbnailFor(path)
 	if err := deleteFile(path); err != nil {
 		return err
 	}

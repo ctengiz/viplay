@@ -376,9 +376,47 @@ func TestDeleteVideoRequiresAuthorisation(t *testing.T) {
 	}
 }
 
+func TestRemoveThumbnailForAt(t *testing.T) {
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, "thumbnails")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	videoPath := filepath.Join(root, "sample.mp4")
+	if err := os.WriteFile(videoPath, []byte("dummy-video-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cachePath, err := thumbnailCachePathAt(videoPath, cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte("cached-jpg-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("expected cached thumbnail to exist: %v", err)
+	}
+	if err := removeThumbnailForAt(videoPath, cacheDir); err != nil {
+		t.Fatalf("failed to remove cached thumbnail: %v", err)
+	}
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("cached thumbnail still exists after removal: %v", err)
+	}
+}
+
 func TestDeleteVideoRemovesAuthorisedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "delete-me.mp4")
 	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cachePath, err := thumbnailCachePathAt(path, thumbnailCacheDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte("dummy-thumb"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	server := newMediaServer()
@@ -392,6 +430,9 @@ func TestDeleteVideoRemovesAuthorisedFile(t *testing.T) {
 	}
 	if server.isAllowed(path) {
 		t.Fatal("deleted file remained authorised")
+	}
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatal("thumbnail cache file still exists after deleting video")
 	}
 }
 

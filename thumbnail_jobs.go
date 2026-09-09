@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type ThumbnailProgress struct {
@@ -81,6 +85,8 @@ func (m *thumbnailManager) run(paths []string, generate func(string) error) {
 			m.status.CompletedPaths = append(m.status.CompletedPaths, path)
 		}
 		m.mu.Unlock()
+
+		time.Sleep(15 * time.Millisecond)
 	}
 }
 
@@ -123,6 +129,27 @@ func (m *thumbnailManager) stopAndWait() {
 func thumbnailCacheDir() string {
 	cache, _ := os.UserCacheDir()
 	return filepath.Join(cache, "ViPlay", "thumbnails")
+}
+
+func thumbnailCachePathAt(path, cacheDir string) (string, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", path, stat.Size(), stat.ModTime().UnixNano())))
+	return filepath.Join(cacheDir, hex.EncodeToString(hash[:])+".jpg"), nil
+}
+
+func removeThumbnailFor(path string) error {
+	return removeThumbnailForAt(path, thumbnailCacheDir())
+}
+
+func removeThumbnailForAt(path, cacheDir string) error {
+	cachePath, err := thumbnailCachePathAt(path, cacheDir)
+	if err != nil {
+		return err
+	}
+	return os.Remove(cachePath)
 }
 
 func clearThumbnailCache() error {
