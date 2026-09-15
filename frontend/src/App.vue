@@ -17,6 +17,10 @@ const volume = ref(.75)
 const muted = ref(false)
 const speed = ref(1)
 const seekStep = ref(10)
+const isSeeking = ref(false)
+let seekResumeTimer = null
+let wasPlayingBeforeSeek = false
+let scrubRaf = null
 const fullscreenActive = ref(false)
 const showQueue = ref(true)
 const subtitle = ref(null)
@@ -212,21 +216,103 @@ async function openSubtitle() {
   if (selected?.url) subtitle.value = selected
 }
 
+function beginSeeking() {
+  if (!isSeeking.value) {
+    isSeeking.value = true
+    wasPlayingBeforeSeek = !!(video.value && !video.value.paused)
+    if (video.value && !video.value.paused) {
+      video.value.pause()
+    }
+  }
+  if (seekResumeTimer) {
+    window.clearTimeout(seekResumeTimer)
+    seekResumeTimer = null
+  }
+}
+
+function finishSeeking(delay = 200) {
+  if (seekResumeTimer) window.clearTimeout(seekResumeTimer)
+  seekResumeTimer = window.setTimeout(() => {
+    seekResumeTimer = null
+    const shouldResume = wasPlayingBeforeSeek
+    isSeeking.value = false
+    wasPlayingBeforeSeek = false
+    if (video.value) current.value = video.value.currentTime
+    if (shouldResume && video.value && video.value.paused) {
+      video.value.play().catch(() => {})
+    } else if (pausedForPlayback && thumbnailProgress.value.paused && (!video.value || video.value.paused)) {
+      pausedForPlayback = false
+      ResumeThumbnailGeneration().then(refreshThumbnailProgress).catch(() => {})
+    }
+  }, delay)
+}
+
 function toggle() {
   if (!video.value || !item.value) return openVideos()
+  const hadActiveSeek = isSeeking.value
+  const previouslyPlaying = wasPlayingBeforeSeek
+  if (seekResumeTimer) {
+    window.clearTimeout(seekResumeTimer)
+    seekResumeTimer = null
+  }
+  isSeeking.value = false
+  wasPlayingBeforeSeek = false
+  if (hadActiveSeek && previouslyPlaying) {
+    video.value.pause()
+    return
+  }
   video.value.paused ? video.value.play() : video.value.pause()
 }
 
 function seekBy(delta) {
-  if (video.value) video.value.currentTime = Math.max(0, Math.min(duration.value, video.value.currentTime + delta))
+  if (!video.value) return
+  beginSeeking()
+  const baseTime = isSeeking.value && current.value !== undefined ? current.value : video.value.currentTime
+  const nextTime = Math.max(0, Math.min(duration.value || 0, baseTime + delta))
+  current.value = nextTime
+  video.value.currentTime = nextTime
+  finishSeeking(200)
 }
 
 function normaliseSeekStep() {
   seekStep.value = Math.min(300, Math.max(1, Math.round(Number(seekStep.value) || 10)))
 }
 
-function seek(event) {
-  if (video.value) video.value.currentTime = Number(event.target.value)
+function startScrub() {
+  beginSeeking()
+  window.addEventListener('pointerup', endScrub, { once: true })
+  window.addEventListener('pointercancel', endScrub, { once: true })
+}
+
+function onScrub(event) {
+  beginSeeking()
+  const targetTime = Number(event.target.value)
+  current.value = targetTime
+  if (scrubRaf) cancelAnimationFrame(scrubRaf)
+  scrubRaf = requestAnimationFrame(() => {
+    scrubRaf = null
+    if (video.value) video.value.currentTime = targetTime
+  })
+}
+
+function endScrub(event) {
+  window.removeEventListener('pointerup', endScrub)
+  window.removeEventListener('pointercancel', endScrub)
+  if (scrubRaf) {
+    cancelAnimationFrame(scrubRaf)
+    scrubRaf = null
+  }
+  if (!isSeeking.value) return
+  if (event?.target && 'value' in event.target) {
+    const targetTime = Number(event.target.value)
+    current.value = targetTime
+    if (video.value) video.value.currentTime = targetTime
+  }
+  finishSeeking(60)
+}
+
+function onTimeUpdate(event) {
+  if (!isSeeking.value) current.value = event.currentTarget.currentTime
 }
 
 async function fullscreen() {
@@ -234,6 +320,12 @@ async function fullscreen() {
   fullscreenActive.value = await Window.IsFullscreen()
 }
 async function select(i, autoplay = false) {
+  if (seekResumeTimer) {
+    window.clearTimeout(seekResumeTimer)
+    seekResumeTimer = null
+  }
+  isSeeking.value = false
+  wasPlayingBeforeSeek = false
   index.value = i
   playing.value = false
   playbackURL.value = ''
@@ -353,17 +445,42 @@ async function navigateDirectory(direction) {
   select(target, true)
 }
 
+let wasPlayingBeforeDelete = false
+
 function requestDelete() {
   if (!item.value) { notify('error', t('error.noVideoTitle'), t('delete.noVideo')); return }
   if (processing.value) { notify('error', t('delete.busyTitle'), t('delete.busy')); return }
+  wasPlayingBeforeDelete = playing.value || !!(video.value && !video.value.paused)
   showDeleteDialog.value = true
+}
+
+function closeDeleteDialog() {
+  showDeleteDialog.value = false
+  wasPlayingBeforeDelete = false
 }
 
 async function deleteCurrent() {
   if (!item.value || processing.value) return
   const deleting = item.value
+  const wasPlaying = wasPlayingBeforeDelete || playing.value || !!(video.value && !video.value.paused)
+  wasPlayingBeforeDelete = false
   showDeleteDialog.value = false
   processing.value = 'delete'
+  if (seekResumeTimer) {
+    window.clearTimeout(seekResumeTimer)
+    seekResumeTimer = null
+  }
+  isSeeking.value = false
+  wasPlayingBeforeSeek = false
+  if (video.value && !video.value.paused) {
+    video.value.pause()
+  }
+  if (video.value) {
+    video.value.currentTime = 0
+  }
+  current.value = 0
+  duration.value = 0
+  playing.value = false
   try {
     await DeleteVideo(deleting.path)
     if (thumbnailReady.value[deleting.path]) {
@@ -375,12 +492,18 @@ async function deleteCurrent() {
       thumbnailProgress.value.completed = Math.max(0, thumbnailProgress.value.completed - 1)
       thumbnailProgress.value.total = Math.max(0, thumbnailProgress.value.total - 1)
     }
-    queue.value.splice(index.value, 1)
-    if (index.value >= queue.value.length) index.value = Math.max(0, queue.value.length - 1)
+    const currentIndex = index.value
+    const hasNext = queue.value.length > 1
+    const nextIndex = currentIndex >= queue.value.length - 1 ? Math.max(0, queue.value.length - 2) : currentIndex
+    autoplayOnReady = wasPlaying && hasNext
     current.value = 0
+    duration.value = 0
     playing.value = false
+    playbackURL.value = ''
     subtitle.value = null
     mediaInfo.value = null
+    queue.value.splice(currentIndex, 1)
+    index.value = nextIndex
     notify('success', t('delete.successTitle'), deleting.name)
   } catch (error) { notify('error', t('delete.errorTitle'), String(error)) }
   finally { processing.value = '' }
@@ -395,22 +518,29 @@ function loaded(event) {
 
 function onKey(event) {
   if (event.key === 'Escape' && showTranscodeDialog.value) { showTranscodeDialog.value = false; return }
-  if (event.key === 'Escape' && showDeleteDialog.value) { showDeleteDialog.value = false; return }
+  if (event.key === 'Escape' && showDeleteDialog.value) { closeDeleteDialog(); return }
   if (!event.repeat && event.key === 'Enter' && showDeleteDialog.value) { event.preventDefault(); deleteCurrent(); return }
   if (event.key === 'Escape' && showSheetDialog.value) { showSheetDialog.value = false; return }
   if (event.key === 'Escape' && showShortcuts.value) { showShortcuts.value = false; return }
   if (showDeleteDialog.value || showTranscodeDialog.value || showShortcuts.value) return
   if (['INPUT', 'BUTTON'].includes(document.activeElement?.tagName) && event.code === 'Space') return
+  if (document.activeElement?.tagName === 'INPUT' && document.activeElement.type !== 'range' && ['ArrowRight', 'ArrowLeft'].includes(event.code)) return
   const player = video.value
   if (event.metaKey && event.code === 'ArrowRight') { event.preventDefault(); navigateDirectory(1); return }
   if (event.metaKey && event.code === 'ArrowLeft') { event.preventDefault(); navigateDirectory(-1); return }
   if (!event.repeat && (event.code === 'Delete' || (event.metaKey && event.code === 'Backspace'))) { event.preventDefault(); requestDelete(); return }
   if (!event.repeat && event.code === 'KeyB' && player) { event.preventDefault(); toggleSplitMarker(); return }
-  if (event.code === 'Space' && player) { event.preventDefault(); player.paused ? player.play() : player.pause() }
-  if (event.code === 'ArrowRight' && player) player.currentTime = Math.min(player.duration || 0, player.currentTime + seekStep.value)
-  if (event.code === 'ArrowLeft' && player) player.currentTime = Math.max(0, player.currentTime - seekStep.value)
+  if (event.code === 'Space' && player) { event.preventDefault(); toggle(); return }
+  if (event.code === 'ArrowRight' && player) { event.preventDefault(); seekBy(seekStep.value); return }
+  if (event.code === 'ArrowLeft' && player) { event.preventDefault(); seekBy(-seekStep.value); return }
   if (event.key.toLowerCase() === 'f') fullscreen()
   if (event.key.toLowerCase() === 'm') muted.value = !muted.value
+}
+
+function onKeyUp(event) {
+  if (['ArrowRight', 'ArrowLeft'].includes(event.code) && isSeeking.value) {
+    finishSeeking(50)
+  }
 }
 
 watch(speed, value => { if (video.value) video.value.playbackRate = value })
@@ -421,6 +551,7 @@ watch(playing, isPlaying => {
       pausedForPlayback = true
       PauseThumbnailGeneration().then(refreshThumbnailProgress).catch(() => {})
     } else if (!isPlaying && pausedForPlayback && thumbnailProgress.value.paused) {
+      if (isSeeking.value) return
       pausedForPlayback = false
       ResumeThumbnailGeneration().then(refreshThumbnailProgress).catch(() => {})
     }
@@ -442,6 +573,8 @@ watch(item, async value => {
   autoplayOnReady = false
   playbackURL.value = ''
   playbackPreparing.value = !!value
+  current.value = 0
+  duration.value = 0
   mediaInfo.value = value ? await ProbeMedia(value.path) : null
   if (!value) { playbackPreparing.value = false; return }
   if (run !== playbackRun) return
@@ -468,8 +601,19 @@ async function changeLanguage(event) {
 }
 onMounted(() => {
   window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKeyUp)
 })
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.clearTimeout(noticeTimer); window.clearInterval(thumbnailPollTimer); StopThumbnailGeneration().catch(() => {}) })
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('keyup', onKeyUp)
+  window.removeEventListener('pointerup', endScrub)
+  window.removeEventListener('pointercancel', endScrub)
+  if (scrubRaf) cancelAnimationFrame(scrubRaf)
+  if (seekResumeTimer) window.clearTimeout(seekResumeTimer)
+  window.clearTimeout(noticeTimer)
+  window.clearInterval(thumbnailPollTimer)
+  StopThumbnailGeneration().catch(() => {})
+})
 </script>
 
 <template>
@@ -511,7 +655,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
       </header>
 
       <div class="stage" @dblclick="fullscreen">
-        <video v-if="item" :key="playbackURL" ref="video" :src="playbackURL || undefined" :muted="muted" @click="toggle" @play="markPlayed" @pause="playing = false" @timeupdate="current = $event.currentTarget.currentTime" @loadedmetadata="loaded" @ended="next">
+        <video v-if="item" :key="playbackURL" ref="video" :src="playbackURL || undefined" :muted="muted" @click="toggle" @play="markPlayed" @pause="playing = false" @timeupdate="onTimeUpdate" @loadedmetadata="loaded" @ended="next">
           <track v-if="subtitle" default kind="subtitles" :src="subtitle.url" srcLang="tr" :label="subtitle.name">
         </video>
         <div v-if="item && playbackPreparing" class="playback-preparing"><LoaderCircle class="spin" :size="30" /><span>{{ t('playback.preparingTitle') }}</span></div>
@@ -525,7 +669,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
       </div>
 
       <div class="controls">
-        <div class="timeline-row"><span>{{ fmt(current) }}</span><div class="timeline-track"><input :aria-label="t('player.progress')" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @input="seek"><button v-for="marker in markerPositions" :key="marker.seconds" class="split-marker" :style="{ left: marker.left }" :aria-label="t('markers.removeAt', { time: fmt(marker.seconds) })" :title="t('markers.removeAt', { time: fmt(marker.seconds) })" @click="removeSplitMarker(marker.seconds)"><span>{{ fmt(marker.seconds) }}</span></button></div><span>{{ fmt(duration) }}</span></div>
+        <div class="timeline-row"><span>{{ fmt(current) }}</span><div class="timeline-track"><input :aria-label="t('player.progress')" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @pointerdown="startScrub" @input="onScrub" @change="endScrub" @pointerup="endScrub" @pointercancel="endScrub"><button v-for="marker in markerPositions" :key="marker.seconds" class="split-marker" :style="{ left: marker.left }" :aria-label="t('markers.removeAt', { time: fmt(marker.seconds) })" :title="t('markers.removeAt', { time: fmt(marker.seconds) })" @click="removeSplitMarker(marker.seconds)"><span>{{ fmt(marker.seconds) }}</span></button></div><span>{{ fmt(duration) }}</span></div>
         <div class="control-row">
           <div class="volume-group">
             <button class="icon-btn" :aria-label="muted ? t('player.unmute') : t('player.mute')" @click="muted = !muted"><VolumeX v-if="muted || volume === 0" :size="20" /><Volume2 v-else :size="20" /></button>
@@ -596,11 +740,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.cle
       </section>
     </div>
 
-    <div v-if="showDeleteDialog" class="shortcut-modal sheet-modal delete-modal" role="dialog" aria-modal="true" :aria-label="t('delete.title')" @click.self="showDeleteDialog = false">
+    <div v-if="showDeleteDialog" class="shortcut-modal sheet-modal delete-modal" role="dialog" aria-modal="true" :aria-label="t('delete.title')" @click.self="closeDeleteDialog">
       <section>
-        <header><div><span>{{ t('delete.label') }}</span><strong>{{ t('delete.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showDeleteDialog = false"><X :size="20" /></button></header>
+        <header><div><span>{{ t('delete.label') }}</span><strong>{{ t('delete.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="closeDeleteDialog"><X :size="20" /></button></header>
         <p>{{ t('delete.confirm', { name: item?.name }) }}</p>
-        <footer><button class="cancel" @click="showDeleteDialog = false">{{ t('delete.cancel') }}</button><button class="confirm danger" autofocus @click="deleteCurrent"><Trash2 :size="17" />{{ t('delete.action') }}</button></footer>
+        <footer><button class="cancel" @click="closeDeleteDialog">{{ t('delete.cancel') }}</button><button class="confirm danger" autofocus @click="deleteCurrent"><Trash2 :size="17" />{{ t('delete.action') }}</button></footer>
       </section>
     </div>
 
