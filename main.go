@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -120,7 +121,7 @@ func main() {
 		},
 	})
 	service.application = app
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",
 		Title:            "ViPlay",
 		Width:            1440,
@@ -129,7 +130,14 @@ func main() {
 		MinHeight:        640,
 		URL:              "/",
 		BackgroundColour: application.NewRGB(9, 10, 12),
+		EnableFileDrop:   true,
 		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHidden},
+	})
+	win.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
+		files := event.Context().DroppedFiles()
+		application.Get().Event.Emit("files-dropped", map[string]any{
+			"files": files,
+		})
 	})
 	err := app.Run()
 	if err != nil {

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -12,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/thesyncim/goh264"
@@ -191,6 +194,7 @@ type ffprobeResult struct {
 	Streams []struct {
 		CodecName string `json:"codec_name"`
 		CodecType string `json:"codec_type"`
+		PixFmt    string `json:"pix_fmt,omitempty"`
 	} `json:"streams"`
 }
 
@@ -200,6 +204,7 @@ type transcodeProfile struct {
 }
 
 var transcodeProfiles = []transcodeProfile{
+	{option: TranscodeOption{ID: "mp4", Codec: "MP4 (H.264)", EstimatedSaving: 20, OutputExtension: ".mp4"}, args: []string{"-preset", "medium", "-crf", "22", "-pix_fmt", "yuv420p"}},
 	{option: TranscodeOption{ID: "hevc", Codec: "HEVC / H.265", EstimatedSaving: 35, OutputExtension: ".mkv"}, args: []string{"-preset", "medium", "-crf", "24"}},
 	{option: TranscodeOption{ID: "av1", Codec: "AV1", EstimatedSaving: 50, OutputExtension: ".mkv"}, args: []string{"-preset", "6", "-crf", "30"}},
 }
@@ -219,8 +224,11 @@ func transcodeOptions(path, locale string) ([]TranscodeOption, error) {
 	}
 	encoders := availableVideoEncoders(ffmpeg)
 	options := make([]TranscodeOption, 0, len(transcodeProfiles))
+	ext := strings.ToLower(filepath.Ext(path))
 	for _, profile := range transcodeProfiles {
-		if (profile.option.ID == "hevc" && (currentCodec == "hevc" || currentCodec == "h265" || currentCodec == "av1")) || (profile.option.ID == "av1" && currentCodec == "av1") {
+		if (profile.option.ID == "hevc" && (currentCodec == "hevc" || currentCodec == "h265" || currentCodec == "av1")) ||
+			(profile.option.ID == "av1" && currentCodec == "av1") ||
+			(profile.option.ID == "mp4" && (ext == ".mp4" || ext == ".m4v") && (currentCodec == "h264" || currentCodec == "avc")) {
 			continue
 		}
 		encoder := preferredEncoder(profile.option.ID, encoders)
@@ -235,10 +243,14 @@ func transcodeOptions(path, locale string) ([]TranscodeOption, error) {
 }
 
 func transcodeVideo(path, optionID, locale string) (TranscodeResult, error) {
-	return transcodeVideoWithDelete(path, optionID, locale, deleteFile)
+	return transcodeVideoWithManager(path, optionID, locale, nil, deleteFile)
 }
 
 func transcodeVideoWithDelete(path, optionID, locale string, removeOriginal func(string) error) (TranscodeResult, error) {
+	return transcodeVideoWithManager(path, optionID, locale, nil, removeOriginal)
+}
+
+func transcodeVideoWithManager(path, optionID, locale string, manager *transcodeManager, removeOriginal func(string) error) (TranscodeResult, error) {
 	options, err := transcodeOptions(path, locale)
 	if err != nil {
 		return TranscodeResult{}, err
@@ -272,14 +284,105 @@ func transcodeVideoWithDelete(path, optionID, locale string, removeOriginal func
 	_ = os.Remove(tempPath)
 	defer os.Remove(tempPath)
 
-	profile := profileByID(selected.ID)
-	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?", "-map", "0:s?", "-map_metadata", "0", "-map_chapters", "0", "-c", "copy", "-c:v", selected.Encoder}
-	args = append(args, profile.args...)
-	args = append(args, tempPath)
-	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
-		return TranscodeResult{}, mediaToolError(translate(locale, "error.transcodeFailed"), runErr, output)
+	duration, _ := mediaDuration(path, locale)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if manager != nil {
+		manager.start(path, selected.Codec, duration, cancel)
+		defer manager.finish()
 	}
-	if err := validateTranscode(path, tempPath, selected.ID, originalInfo.Size(), locale); err != nil {
+
+	profile := profileByID(selected.ID)
+	probe, probeErr := probeWithFFprobe(path, locale)
+	hasSubs := probeErr == nil && hasTextSubtitles(probe)
+
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-progress", "pipe:1",
+		"-i", path,
+		"-map", "0:v:0", "-map", "0:a?",
+	}
+	if selected.OutputExtension == ".mp4" {
+		if hasSubs {
+			args = append(args, "-map", "0:s?")
+		}
+		args = append(args,
+			"-map_metadata", "0", "-map_chapters", "0",
+			"-c", "copy", "-c:v", selected.Encoder,
+			"-c:a", "aac", "-b:a", "192k",
+		)
+		if hasSubs {
+			args = append(args, "-c:s", "mov_text")
+		}
+		args = append(args, profile.args...)
+		args = append(args, "-movflags", "+faststart", tempPath)
+	} else {
+		args = append(args,
+			"-map", "0:s?",
+			"-map_metadata", "0", "-map_chapters", "0",
+			"-c", "copy", "-c:v", selected.Encoder,
+		)
+		args = append(args, profile.args...)
+		args = append(args, tempPath)
+	}
+
+	cmd := exec.CommandContext(ctx, ffmpeg, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return TranscodeResult{}, err
+	}
+
+	var parseWg sync.WaitGroup
+	parseWg.Add(1)
+	go func() {
+		defer parseWg.Done()
+		scanner := bufio.NewScanner(stdout)
+		var currentSec, fps float64
+		var speed string
+		for scanner.Scan() {
+			line := scanner.Text()
+			if key, val, ok := strings.Cut(line, "="); ok {
+				key = strings.TrimSpace(key)
+				val = strings.TrimSpace(val)
+				switch key {
+				case "out_time_us":
+					if us, parseErr := strconv.ParseInt(val, 10, 64); parseErr == nil && us >= 0 {
+						currentSec = float64(us) / 1000000.0
+					}
+				case "fps":
+					if f, parseErr := strconv.ParseFloat(val, 64); parseErr == nil {
+						fps = f
+					}
+				case "speed":
+					speed = val
+				case "progress":
+					if manager != nil {
+						manager.update(currentSec, fps, speed)
+					}
+				}
+			}
+		}
+	}()
+
+	runErr := cmd.Wait()
+	parseWg.Wait()
+
+	if ctx.Err() != nil {
+		return TranscodeResult{}, fmt.Errorf("%s", translate(locale, "error.transcodeCancelled"))
+	}
+	if runErr != nil {
+		return TranscodeResult{}, mediaToolError(translate(locale, "error.transcodeFailed"), runErr, stderrBuf.Bytes())
+	}
+	requireSmaller := removeOriginal != nil
+	if err := validateTranscode(path, tempPath, selected.ID, originalInfo.Size(), requireSmaller, locale); err != nil {
 		return TranscodeResult{}, err
 	}
 	if err := os.Rename(tempPath, outputPath); err != nil {
@@ -290,11 +393,18 @@ func transcodeVideoWithDelete(path, optionID, locale string, removeOriginal func
 		_ = os.Remove(outputPath)
 		return TranscodeResult{}, err
 	}
-	if err := removeOriginal(path); err != nil {
-		_ = os.Remove(outputPath)
-		return TranscodeResult{}, fmt.Errorf("%s: %w", translate(locale, "error.transcodeOriginalDeleteFailed"), err)
+	if removeOriginal != nil {
+		if err := removeOriginal(path); err != nil {
+			_ = os.Remove(outputPath)
+			return TranscodeResult{}, fmt.Errorf("%s: %w", translate(locale, "error.transcodeOriginalDeleteFailed"), err)
+		}
 	}
-	return TranscodeResult{Item: MediaItem{Path: outputPath}, OriginalSize: originalInfo.Size(), OutputSize: outputInfo.Size()}, nil
+	return TranscodeResult{
+		Item:         MediaItem{Path: outputPath},
+		OriginalSize: originalInfo.Size(),
+		OutputSize:   outputInfo.Size(),
+		Deleted:      removeOriginal != nil,
+	}, nil
 }
 
 func profileByID(id string) transcodeProfile {
@@ -328,6 +438,8 @@ func parseVideoEncoders(output string) map[string]bool {
 func preferredEncoder(codec string, encoders map[string]bool) string {
 	var candidates []string
 	switch codec {
+	case "mp4":
+		candidates = []string{"libx264"}
 	case "hevc":
 		candidates = []string{"libx265"}
 	case "av1":
@@ -341,12 +453,24 @@ func preferredEncoder(codec string, encoders map[string]bool) string {
 	return ""
 }
 
+func hasTextSubtitles(probe ffprobeResult) bool {
+	for _, stream := range probe.Streams {
+		if stream.CodecType == "subtitle" {
+			switch strings.ToLower(stream.CodecName) {
+			case "subrip", "srt", "ass", "ssa", "mov_text", "webvtt":
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func probeWithFFprobe(path, locale string) (ffprobeResult, error) {
 	ffprobe, err := requireMediaTool("ffprobe", locale)
 	if err != nil {
 		return ffprobeResult{}, err
 	}
-	output, runErr := exec.Command(ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type", "-of", "json", path).CombinedOutput()
+	output, runErr := exec.Command(ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type,pix_fmt", "-of", "json", path).CombinedOutput()
 	if runErr != nil {
 		return ffprobeResult{}, mediaToolError(translate(locale, "error.durationFailed"), runErr, output)
 	}
@@ -366,12 +490,12 @@ func firstVideoCodec(result ffprobeResult) string {
 	return ""
 }
 
-func validateTranscode(source, output, codec string, sourceSize int64, locale string) error {
+func validateTranscode(source, output, codec string, sourceSize int64, requireSmaller bool, locale string) error {
 	info, err := os.Stat(output)
 	if err != nil || info.Size() == 0 {
 		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
 	}
-	if info.Size() >= sourceSize {
+	if requireSmaller && info.Size() >= sourceSize {
 		return fmt.Errorf("%s", translate(locale, "error.transcodeNotSmaller"))
 	}
 	sourceProbe, err := probeWithFFprobe(source, locale)
@@ -382,7 +506,7 @@ func validateTranscode(source, output, codec string, sourceSize int64, locale st
 	if err != nil {
 		return err
 	}
-	wantCodec := map[string]string{"hevc": "hevc", "av1": "av1"}[codec]
+	wantCodec := map[string]string{"hevc": "hevc", "av1": "av1", "mp4": "h264"}[codec]
 	if firstVideoCodec(outputProbe) != wantCodec {
 		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
 	}

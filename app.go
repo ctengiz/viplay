@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -54,6 +55,7 @@ type TranscodeResult struct {
 	Item         MediaItem `json:"item"`
 	OriginalSize int64     `json:"originalSize"`
 	OutputSize   int64     `json:"outputSize"`
+	Deleted      bool      `json:"deleted"`
 }
 
 type App struct {
@@ -61,11 +63,12 @@ type App struct {
 	server      *mediaServer
 	recent      *recentStore
 	thumbnails  *thumbnailManager
+	transcode   *transcodeManager
 	locale      localeState
 }
 
 func NewApp(server *mediaServer) *App {
-	app := &App{server: server, recent: newRecentStore(), thumbnails: newThumbnailManager()}
+	app := &App{server: server, recent: newRecentStore(), thumbnails: newThumbnailManager(), transcode: newTranscodeManager()}
 	app.locale.set(defaultLocale)
 	return app
 }
@@ -86,7 +89,7 @@ func (a *App) mediaItem(path string) MediaItem {
 func (a *App) OpenVideos() ([]MediaItem, error) {
 	paths, err := a.application.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title:   a.tr("dialog.openVideo"),
-		Filters: []application.FileFilter{{DisplayName: a.tr("dialog.mediaFiles"), Pattern: "*.mp4;*.m4v;*.mov;*.webm;*.mkv;*.avi;*.mpg;*.mpeg;*.flv;*.mp3;*.m4a;*.wav;*.flac"}},
+		Filters: []application.FileFilter{{DisplayName: a.tr("dialog.mediaFiles"), Pattern: "*.mp4;*.m4v;*.mov;*.webm;*.mkv;*.avi;*.wmv;*.asf;*.mpg;*.mpeg;*.flv;*.mp3;*.m4a;*.wav;*.flac"}},
 	}).PromptForMultipleSelection()
 	if err != nil {
 		return nil, err
@@ -111,6 +114,48 @@ func (a *App) OpenSubtitle() (MediaItem, error) {
 	}
 	abs := a.server.allow(path)
 	return MediaItem{Name: filepath.Base(abs), Path: abs, URL: "/media?path=" + url.QueryEscape(abs), Kind: "subtitle"}, nil
+}
+
+func (a *App) OpenSubtitlePath(path string) (MediaItem, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return MediaItem{}, errors.New("empty path")
+	}
+	fi, err := os.Stat(trimmed)
+	if err != nil || fi.IsDir() {
+		return MediaItem{}, fmt.Errorf("invalid subtitle path: %s", trimmed)
+	}
+	abs := a.server.allow(trimmed)
+	return MediaItem{Name: filepath.Base(abs), Path: abs, URL: "/media?path=" + url.QueryEscape(abs), Kind: "subtitle"}, nil
+}
+
+func (a *App) OpenDroppedFiles(paths []string) ([]MediaItem, error) {
+	items := make([]MediaItem, 0, len(paths))
+	for _, path := range paths {
+		trimmed := strings.TrimSpace(path)
+		if trimmed == "" {
+			continue
+		}
+		fi, err := os.Stat(trimmed)
+		if err != nil {
+			continue
+		}
+		if fi.IsDir() {
+			entries, err := os.ReadDir(trimmed)
+			if err == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() && isSupportedMedia(entry.Name()) {
+						items = append(items, a.mediaItem(filepath.Join(trimmed, entry.Name())))
+					}
+				}
+			}
+			continue
+		}
+		if isSupportedMedia(trimmed) {
+			items = append(items, a.mediaItem(trimmed))
+		}
+	}
+	return items, nil
 }
 
 func (a *App) DirectoryVideos(path string) ([]MediaItem, error) {
@@ -156,7 +201,19 @@ func (a *App) PreparePlayback(path string) (string, error) {
 	if !a.server.isAllowed(path) {
 		return "", errors.New(a.tr("error.unauthorised"))
 	}
-	playbackPath, err := preparePlaybackFile(path, a.locale.get())
+	playbackPath, err := preparePlaybackFile(path, a.locale.get(), false)
+	if err != nil {
+		return "", err
+	}
+	abs := a.server.allow(playbackPath)
+	return "/media?path=" + url.QueryEscape(abs), nil
+}
+
+func (a *App) PreparePlaybackForce(path string) (string, error) {
+	if !a.server.isAllowed(path) {
+		return "", errors.New(a.tr("error.unauthorised"))
+	}
+	playbackPath, err := preparePlaybackFile(path, a.locale.get(), true)
 	if err != nil {
 		return "", err
 	}
@@ -251,23 +308,43 @@ func (a *App) TranscodeOptions(path string) ([]TranscodeOption, error) {
 	return transcodeOptions(path, a.locale.get())
 }
 
-func (a *App) TranscodeVideo(path string, optionID string) (TranscodeResult, error) {
+func (a *App) TranscodeVideo(path string, optionID string, trashOriginal bool) (TranscodeResult, error) {
 	if !a.server.isAllowed(path) {
 		return TranscodeResult{}, errors.New(a.tr("error.unauthorised"))
 	}
-	result, err := transcodeVideo(path, optionID, a.locale.get())
+	if a.transcode.progress().Active {
+		return TranscodeResult{}, errors.New(a.tr("error.transcodeBusy"))
+	}
+	var removeFn func(string) error
+	if trashOriginal {
+		removeFn = deleteFile
+	}
+	result, err := transcodeVideoWithManager(path, optionID, a.locale.get(), a.transcode, removeFn)
 	if err != nil {
 		return TranscodeResult{}, err
 	}
-	a.server.disallow(path)
+	if trashOriginal {
+		a.server.disallow(path)
+		a.recent.replace(path, result.Item.Path)
+	} else {
+		a.recent.add(result.Item.Path)
+	}
 	result.Item = a.mediaItem(result.Item.Path)
-	a.recent.replace(path, result.Item.Path)
+	result.Deleted = trashOriginal
 	return result, nil
+}
+
+func (a *App) TranscodeStatus() TranscodeProgress {
+	return a.transcode.progress()
+}
+
+func (a *App) CancelTranscode() {
+	a.transcode.cancel()
 }
 
 func isSupportedMedia(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".mpg", ".mpeg", ".flv", ".mp3", ".m4a", ".wav", ".flac":
+	case ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".wmv", ".asf", ".mpg", ".mpeg", ".flv", ".mp3", ".m4a", ".wav", ".flac":
 		return true
 	default:
 		return false

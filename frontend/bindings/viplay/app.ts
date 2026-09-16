@@ -9,6 +9,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function CancelTranscode(): $CancellablePromise<void> {
+    return $Call.ByID(1345363006);
+}
+
 export function ClearThumbnailCache(): $CancellablePromise<void> {
     return $Call.ByID(3775367792);
 }
@@ -41,8 +45,20 @@ export function MarkPlayed(path: string): $CancellablePromise<void> {
     return $Call.ByID(180312699, path);
 }
 
+export function OpenDroppedFiles(paths: string[]): $CancellablePromise<$models.MediaItem[]> {
+    return $Call.ByID(2280095460, paths).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
 export function OpenSubtitle(): $CancellablePromise<$models.MediaItem> {
     return $Call.ByID(614166045).then(($result: any) => {
+        return $$createType0($result);
+    });
+}
+
+export function OpenSubtitlePath(path: string): $CancellablePromise<$models.MediaItem> {
+    return $Call.ByID(820438014, path).then(($result: any) => {
         return $$createType0($result);
     });
 }
@@ -59,6 +75,10 @@ export function PauseThumbnailGeneration(): $CancellablePromise<void> {
 
 export function PreparePlayback(path: string): $CancellablePromise<string> {
     return $Call.ByID(1688424733, path);
+}
+
+export function PreparePlaybackForce(path: string): $CancellablePromise<string> {
+    return $Call.ByID(2749264444, path);
 }
 
 export function ProbeMedia(path: string): $CancellablePromise<$models.MediaInfo> {
@@ -105,9 +125,15 @@ export function TranscodeOptions(path: string): $CancellablePromise<$models.Tran
     });
 }
 
-export function TranscodeVideo(path: string, optionID: string): $CancellablePromise<$models.TranscodeResult> {
-    return $Call.ByID(2627797619, path, optionID).then(($result: any) => {
+export function TranscodeStatus(): $CancellablePromise<$models.TranscodeProgress> {
+    return $Call.ByID(717926866).then(($result: any) => {
         return $$createType9($result);
+    });
+}
+
+export function TranscodeVideo(path: string, optionID: string, trashOriginal: boolean): $CancellablePromise<$models.TranscodeResult> {
+    return $Call.ByID(2627797619, path, optionID, trashOriginal).then(($result: any) => {
+        return $$createType10($result);
     });
 }
 
@@ -121,4 +147,5 @@ const $$createType5 = $models.MultiSplitResult.createFrom;
 const $$createType6 = $models.ThumbnailProgress.createFrom;
 const $$createType7 = $models.TranscodeOption.createFrom;
 const $$createType8 = $Create.Array($$createType7);
-const $$createType9 = $models.TranscodeResult.createFrom;
+const $$createType9 = $models.TranscodeProgress.createFrom;
+const $$createType10 = $models.TranscodeResult.createFrom;

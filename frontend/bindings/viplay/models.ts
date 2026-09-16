@@ -305,10 +305,60 @@ export class TranscodeOption {
     }
 }
 
+export class TranscodeProgress {
+    "active": boolean;
+    "path": string;
+    "codec": string;
+    "percent": number;
+    "speed": string;
+    "fps": number;
+    "currentTime": number;
+    "totalTime": number;
+
+    /** Creates a new TranscodeProgress instance. */
+    constructor($$source: Partial<TranscodeProgress> = {}) {
+        if (!("active" in $$source)) {
+            this["active"] = false;
+        }
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("codec" in $$source)) {
+            this["codec"] = "";
+        }
+        if (!("percent" in $$source)) {
+            this["percent"] = 0;
+        }
+        if (!("speed" in $$source)) {
+            this["speed"] = "";
+        }
+        if (!("fps" in $$source)) {
+            this["fps"] = 0;
+        }
+        if (!("currentTime" in $$source)) {
+            this["currentTime"] = 0;
+        }
+        if (!("totalTime" in $$source)) {
+            this["totalTime"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new TranscodeProgress instance from a string or object.
+     */
+    static createFrom($$source: any = {}): TranscodeProgress {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new TranscodeProgress($$parsedSource as Partial<TranscodeProgress>);
+    }
+}
+
 export class TranscodeResult {
     "item": MediaItem;
     "originalSize": number;
     "outputSize": number;
+    "deleted": boolean;
 
     /** Creates a new TranscodeResult instance. */
     constructor($$source: Partial<TranscodeResult> = {}) {
@@ -320,6 +370,9 @@ export class TranscodeResult {
         }
         if (!("outputSize" in $$source)) {
             this["outputSize"] = 0;
+        }
+        if (!("deleted" in $$source)) {
+            this["deleted"] = false;
         }
 
         Object.assign(this, $$source);

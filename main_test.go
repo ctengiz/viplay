@@ -167,6 +167,132 @@ func TestTranscodeWithSystemFFmpeg(t *testing.T) {
 	}
 }
 
+func TestTranscodeToMP4WithOptionalDelete(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	if _, err := requireMediaTool("ffprobe", "en"); err != nil {
+		t.Skip(err)
+	}
+	if !availableVideoEncoders(ffmpeg)["libx264"] {
+		t.Skip("libx264 is not available")
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "transcode-source.mkv")
+	if output, runErr := exec.Command(ffmpeg,
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=1:size=320x240:rate=10",
+		"-c:v", "mpeg4", "-q:v", "3", input,
+	).CombinedOutput(); runErr != nil {
+		t.Fatalf("test video creation failed: %v: %s", runErr, output)
+	}
+
+	options, err := transcodeOptions(input, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasMP4 := false
+	for _, opt := range options {
+		if opt.ID == "mp4" {
+			hasMP4 = true
+			if opt.OutputExtension != ".mp4" {
+				t.Fatalf("expected .mp4 output extension, got %s", opt.OutputExtension)
+			}
+		}
+	}
+	if !hasMP4 {
+		t.Fatal("expected mp4 option to be available for non-mp4 video")
+	}
+
+	// Transcode to MP4 with original preserved (removeOriginal = nil)
+	result, err := transcodeVideoWithManager(input, "mp4", "en", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted {
+		t.Fatal("expected result.Deleted to be false when original is preserved")
+	}
+	if _, err := os.Stat(input); err != nil {
+		t.Fatalf("original file should remain when removeOriginal is nil: %v", err)
+	}
+	info, err := os.Stat(result.Item.Path)
+	if err != nil || info.Size() == 0 {
+		t.Fatalf("expected valid output file: %#v, err=%v", result, err)
+	}
+	if filepath.Ext(result.Item.Path) != ".mp4" {
+		t.Fatalf("expected .mp4 output, got %s", result.Item.Path)
+	}
+	probe, err := probeWithFFprobe(result.Item.Path, "en")
+	if err != nil || firstVideoCodec(probe) != "h264" {
+		t.Fatalf("unexpected output codec: %q, error=%v", firstVideoCodec(probe), err)
+	}
+}
+
+func TestTranscodeCancellation(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	if _, err := requireMediaTool("ffprobe", "en"); err != nil {
+		t.Skip(err)
+	}
+	if !availableVideoEncoders(ffmpeg)["libx265"] {
+		t.Skip("libx265 is not available")
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "transcode-source.mp4")
+	if output, runErr := exec.Command(ffmpeg,
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=10:size=640x360:rate=30",
+		"-c:v", "mpeg4", "-q:v", "2", input,
+	).CombinedOutput(); runErr != nil {
+		t.Fatalf("test video creation failed: %v: %s", runErr, output)
+	}
+	manager := newTranscodeManager()
+	done := make(chan error, 1)
+	go func() {
+		_, transcodeErr := transcodeVideoWithManager(input, "hevc", "en", manager, os.Remove)
+		done <- transcodeErr
+	}()
+
+	var started bool
+	for i := 0; i < 50; i++ {
+		time.Sleep(50 * time.Millisecond)
+		if manager.progress().Active {
+			started = true
+			break
+		}
+	}
+	if !started {
+		t.Fatal("transcode manager never became active")
+	}
+
+	if !manager.cancel() {
+		t.Fatal("expected cancel to return true")
+	}
+
+	err = <-done
+	if err == nil {
+		t.Fatal("expected transcode error on cancellation, got nil")
+	}
+
+	if _, statErr := os.Stat(input); statErr != nil {
+		t.Fatalf("original file was removed or missing: %v", statErr)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".viplay-transcode-") {
+			t.Fatalf("temporary transcode file not cleaned up: %s", entry.Name())
+		}
+	}
+
+	if manager.progress().Active {
+		t.Fatal("transcode manager still reports active after cancel")
+	}
+}
+
 func TestExtractContactSheetWithSystemFFmpeg(t *testing.T) {
 	ffmpeg, err := requireMediaTool("ffmpeg", "en")
 	if err != nil {
@@ -288,7 +414,7 @@ func TestMediaKind(t *testing.T) {
 }
 
 func TestLegacyVideoFormatsAreSupportedAndRequirePlaybackProxy(t *testing.T) {
-	for _, name := range []string{"movie.mpg", "movie.MPEG", "movie.flv"} {
+	for _, name := range []string{"movie.mpg", "movie.MPEG", "movie.flv", "movie.avi", "movie.AVI", "movie.wmv", "movie.WMV", "movie.asf", "movie.mkv", "movie.MKV"} {
 		if !isSupportedMedia(name) || mediaKind(name) != "video" || !requiresPlaybackProxy(name) {
 			t.Fatalf("legacy video format is not fully supported: %q", name)
 		}
@@ -313,6 +439,9 @@ func TestPrepareLegacyPlaybackWithSystemFFmpeg(t *testing.T) {
 	}{
 		{ext: ".mpg", codec: "mpeg2video", format: "mpeg"},
 		{ext: ".flv", codec: "flv", format: "flv"},
+		{ext: ".avi", codec: "mpeg4", format: "avi"},
+		{ext: ".wmv", codec: "wmv2", format: "asf"},
+		{ext: ".mkv", codec: "libx264", format: "matroska"},
 	}
 	for _, test := range tests {
 		t.Run(test.ext, func(t *testing.T) {
@@ -337,6 +466,48 @@ func TestPrepareLegacyPlaybackWithSystemFFmpeg(t *testing.T) {
 				t.Fatalf("playback proxy was not reused: %q, %v", second, err)
 			}
 		})
+	}
+}
+
+func TestOpenDroppedFilesAndSubtitle(t *testing.T) {
+	root := t.TempDir()
+	server := newMediaServer()
+	app := NewApp(server)
+
+	vidPath := filepath.Join(root, "clip.mkv")
+	if err := os.WriteFile(vidPath, []byte("fake-video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subPath := filepath.Join(root, "sub.vtt")
+	if err := os.WriteFile(subPath, []byte("WEBVTT\n\n00:00.000 --> 00:01.000\nHi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dirPath := filepath.Join(root, "folder")
+	if err := os.Mkdir(dirPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inDirPath := filepath.Join(dirPath, "nested.wmv")
+	if err := os.WriteFile(inDirPath, []byte("fake-wmv"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := app.OpenDroppedFiles([]string{vidPath, dirPath, filepath.Join(root, "unsupported.xyz")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 media items, got %d", len(items))
+	}
+	if !server.isAllowed(vidPath) || !server.isAllowed(inDirPath) {
+		t.Fatal("dropped media was not authorised in media server")
+	}
+
+	sub, err := app.OpenSubtitlePath(subPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.Kind != "subtitle" || !server.isAllowed(subPath) {
+		t.Fatal("subtitle was not authorised")
 	}
 }
 

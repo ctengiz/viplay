@@ -15,5 +15,6 @@ export {
     SplitResult,
     ThumbnailProgress,
     TranscodeOption,
+    TranscodeProgress,
     TranscodeResult
 } from "./models.js";
