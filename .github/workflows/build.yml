@@ -56,6 +56,8 @@ jobs:
       - name: macOS bundled component sources
         if: runner.os == 'macOS'
         run: |
+          # The core tap lets Homebrew load formula resources and patches instead of the JSON API summary.
+          brew tap --force homebrew/core
           python3 build/darwin/fetch_sources.py bin/ViPlay.app dist/sources
           ditto -c -k --keepParent bin/ViPlay.app dist/ViPlay-macOS.zip
       - uses: actions/upload-artifact@v4

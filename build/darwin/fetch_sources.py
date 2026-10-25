@@ -15,18 +15,23 @@ import sys
 import tarfile
 
 
-def run(*args):
-    result = subprocess.run(args, capture_output=True, text=True)
+def run(*args, env=None):
+    result = subprocess.run(args, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         raise SystemExit(f"{' '.join(args[:3])} failed ({result.returncode}):\n{result.stderr.strip()}")
     return result.stdout
 
 
-# Formulae installed from Homebrew's JSON API omit resources and patches, so the Ruby source is loaded instead.
+# Formulae loaded from Homebrew's JSON API omit resources and patches. A local homebrew/core tap (CI taps it)
+# loads them faithfully; otherwise the formula source is evaluated, which can break on DSL from newer Homebrew.
 EXTRAS_SCRIPT = """
-# no_autobump! only steers version bumps and is rejected outside its tap, so it is dropped before loading.
-contents = File.read(ARGV[1]).gsub(/^\\s*no_autobump!.*$/, "")
-formula = Formulary.from_contents(ARGV[0], Pathname(ARGV[1]), contents)
+if ARGV[2] == "tap"
+  formula = Formula[ARGV[0]]
+else
+  # no_autobump! only steers version bumps and is rejected outside its tap, so it is dropped before loading.
+  contents = File.read(ARGV[1]).gsub(/^\\s*no_autobump!.*$/, "")
+  formula = Formulary.from_contents(ARGV[0], Pathname(ARGV[1]), contents)
+end
 downloads = formula.resources + formula.patchlist.select(&:external?).map(&:resource)
 downloads.each do |download|
   download.fetch
@@ -60,7 +65,9 @@ def fetch(formula, bundled_version, output):
     recipe = os.path.join(output, f"{formula}.rb")
     with open(recipe, "w") as handle:
         handle.write(run("brew", "cat", formula))
-    for line in run("brew", "ruby", "-e", EXTRAS_SCRIPT, formula, recipe).splitlines():
+    core_tap = os.path.join(run("brew", "--repository", "homebrew/core").strip(), "Formula")
+    mode, env = ("tap", dict(os.environ, HOMEBREW_NO_INSTALL_FROM_API="1")) if os.path.isdir(core_tap) else ("source", None)
+    for line in run("brew", "ruby", "-e", EXTRAS_SCRIPT, formula, recipe, mode, env=env).splitlines():
         if not line.startswith("SOURCE\t"):
             continue
         _, name, path = line.split("\t", 2)
