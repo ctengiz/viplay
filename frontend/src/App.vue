@@ -1,8 +1,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Copy, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
+import { AlertCircle, ArrowUpDown, Captions, CheckCircle2, ChevronDown, ChevronRight, Copy, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Clipboard, Events, Window } from '@wailsio/runtime'
-import { CancelTranscode, ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, OpenDroppedFiles, OpenSubtitle, OpenSubtitlePath, OpenVideos, PauseThumbnailGeneration, PlayerEngine, PreparePlayback, PreparePlaybackForce, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeStatus, TranscodeVideo } from '../bindings/viplay/app'
+import { CancelTranscode, ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, MediaDurations, OpenDroppedFiles, OpenSubtitle, OpenSubtitlePath, OpenVideos, PauseThumbnailGeneration, PendingSystemFiles, PlayerEngine, PreparePlayback, PreparePlaybackForce, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, RevealInFolder, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeStatus, TranscodeVideo } from '../bindings/viplay/app'
 import { loadLocale, locale, locales, t } from './i18n'
 import { createNativePlayer } from './nativePlayer'
 
@@ -51,6 +51,16 @@ const splitMarkers = ref([])
 const thumbnailProgress = ref({ active: false, paused: false, completed: 0, total: 0, current: '', completedPaths: [] })
 const thumbnailReady = ref({})
 const thumbnailRevision = ref(0)
+const durations = ref({})
+const sortModes = ['name', 'modified', 'duration']
+const sortMode = ref(sortModes.includes(localStorage.getItem('viplay.playlist.sort')) ? localStorage.getItem('viplay.playlist.sort') : 'name')
+const queueList = ref(null)
+// Paths a finished run already processed; failures (non-H.264) are not retried on every scroll.
+const thumbnailAttempted = new Set()
+let thumbnailRunPaths = []
+let queueObserver = null
+let visibleTimer = null
+const visiblePaths = new Set()
 const fileDragOver = ref(false)
 let proxyFallbackAttempted = false
 let noticeTimer
@@ -60,6 +70,7 @@ let playbackRun = 0
 let autoplayOnReady = false
 let pausedForPlayback = false
 const item = computed(() => queue.value[index.value])
+const hasVideos = computed(() => queue.value.some(entry => entry.kind === 'video'))
 const progress = computed(() => `${duration.value ? current.value / duration.value * 100 : 0}%`)
 const markerPositions = computed(() => splitMarkers.value.map(seconds => ({ seconds, left: `${seconds / duration.value * 100}%` })))
 const volumeProgress = computed(() => `${volume.value * 100}%`)
@@ -90,7 +101,7 @@ function fmt(value) {
 async function openVideos() {
   const items = await OpenVideos()
   if (!items?.length) return
-  const directory = await DirectoryVideos(items[0].path)
+  const directory = await folderItems(items[0].path)
   queue.value = directory
   const selectedIndex = directory.findIndex(entry => entry.path === items[0].path)
   index.value = Math.max(0, selectedIndex)
@@ -106,7 +117,7 @@ async function handleDroppedFiles(filePaths) {
       const items = await OpenDroppedFiles(mediaPaths)
       if (items?.length) {
         let directory = []
-        try { directory = await DirectoryVideos(items[0].path) } catch {}
+        try { directory = await folderItems(items[0].path) } catch {}
         queue.value = directory.length ? directory : items
         const selectedIndex = queue.value.findIndex(entry => entry.path === items[0].path)
         index.value = Math.max(0, selectedIndex)
@@ -148,6 +159,14 @@ async function onVideoError() {
   }
 }
 
+async function loadFolder() {
+  if (!item.value || libraryView.value === 'folder') return
+  const activePath = item.value.path
+  queue.value = await folderItems(activePath)
+  index.value = Math.max(0, queue.value.findIndex(entry => entry.path === activePath))
+  libraryView.value = 'folder'
+}
+
 async function loadRecent() {
   const items = await RecentVideos()
   queue.value = items || []
@@ -174,17 +193,16 @@ async function splitCurrent() {
     notify('success', t('split.successTitle'), `${fmt(result.splitTime)} · ${result.firstPath} · ${result.secondPath}`)
     if (libraryView.value === 'folder') {
       const activePath = item.value.path
-      queue.value = await DirectoryVideos(activePath)
+      queue.value = await folderItems(activePath)
       index.value = queue.value.findIndex(entry => entry.path === activePath)
     }
   } catch (error) { notify('error', t('split.errorTitle'), String(error)) }
   finally { processing.value = '' }
 }
 
-function toggleSplitMarker() {
+function toggleSplitMarker(seconds = video.value?.currentTime ?? current.value) {
   if (!item.value || !duration.value) { notify('error', t('error.noVideoTitle'), t('error.noVideoSplit')); return }
   if (processing.value) return
-  const seconds = video.value?.currentTime ?? current.value
   if (seconds <= .05 || seconds >= duration.value - .05) { notify('error', t('error.invalidSplitTitle'), t('error.invalidSplit')); return }
   const existing = splitMarkers.value.findIndex(marker => Math.abs(marker - seconds) < .25)
   if (existing >= 0) {
@@ -193,6 +211,12 @@ function toggleSplitMarker() {
   }
   if (splitMarkers.value.length >= 100) { notify('error', t('markers.limitTitle'), t('markers.limit')); return }
   splitMarkers.value = [...splitMarkers.value, seconds].sort((a, b) => a - b)
+}
+
+// Right-clicking the timeline places a marker under the cursor without seeking there.
+function toggleMarkerAtPointer(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  toggleSplitMarker(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * duration.value)
 }
 
 function removeSplitMarker(seconds) {
@@ -213,7 +237,7 @@ async function splitAtMarkers() {
     notify('success', t('multiSplit.successTitle'), t('multiSplit.success', { count: result.paths.length }))
     if (libraryView.value === 'folder') {
       const activePath = item.value.path
-      queue.value = await DirectoryVideos(activePath)
+      queue.value = await folderItems(activePath)
       index.value = queue.value.findIndex(entry => entry.path === activePath)
     }
   } catch (error) { notify('error', t('split.errorTitle'), String(error)) }
@@ -440,7 +464,77 @@ async function select(i, autoplay = false) {
 function next() { if (index.value < queue.value.length - 1) select(index.value + 1, true) }
 function previous() { current.value > 3 ? seekBy(-current.value) : index.value > 0 && select(index.value - 1, true) }
 function title(name) { return name.replace(/\.[^/.]+$/, '') }
-function fileSize(value) { return value ? `${(value / 1024 / 1024).toFixed(1)} MB` : '—' }
+function fileType(name) { return name.split('.').pop().toUpperCase() }
+function fileSize(value) {
+  if (!value) return '—'
+  const megabytes = value / 1024 / 1024
+  return megabytes >= 1024 ? `${(megabytes / 1024).toFixed(2)} GB` : `${megabytes.toFixed(1)} MB`
+}
+
+function sortItems(items) {
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  // Longest first; files whose duration could not be read go last.
+  const byDuration = (a, b) => (durations.value[b.path] || 0) - (durations.value[a.path] || 0) || byName(a, b)
+  const compare = { modified: (a, b) => b.modTime - a.modTime || byName(a, b), duration: byDuration }[sortMode.value] ?? byName
+  return [...items].sort(compare)
+}
+
+// Duration sorting needs every row's duration, not only the rows the viewport has loaded.
+async function loadAllDurations(items) {
+  const missing = items.filter(entry => !durations.value[entry.path]).map(entry => entry.path)
+  if (missing.length) {
+    try { Object.assign(durations.value, await MediaDurations(missing)) } catch {}
+  }
+}
+
+async function folderItems(path) {
+  const items = await DirectoryVideos(path)
+  if (sortMode.value === 'duration') await loadAllDurations(items)
+  return sortItems(items)
+}
+
+watch(sortMode, async value => {
+  try { localStorage.setItem('viplay.playlist.sort', value) } catch {}
+  if (libraryView.value !== 'folder' || !queue.value.length) return
+  if (value === 'duration') await loadAllDurations(queue.value)
+  if (sortMode.value !== value) return
+  const activePath = item.value?.path
+  queue.value = sortItems(queue.value)
+  index.value = Math.max(0, queue.value.findIndex(entry => entry.path === activePath))
+})
+
+// Rows entering the playlist viewport get their durations and thumbnails on demand.
+function observeQueueRows() {
+  queueObserver?.disconnect()
+  visiblePaths.clear()
+  if (!queueList.value) return
+  // A new observer each time: the list element is recreated when the playlist is closed and reopened.
+  queueObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const path = entry.target.dataset.path
+      entry.isIntersecting ? visiblePaths.add(path) : visiblePaths.delete(path)
+    }
+    window.clearTimeout(visibleTimer)
+    visibleTimer = window.setTimeout(loadVisibleRows, 150)
+  }, { root: queueList.value, rootMargin: '200px 0px' })
+  queueList.value.querySelectorAll('.queue-item').forEach(row => queueObserver.observe(row))
+}
+
+async function loadVisibleRows() {
+  const visible = queue.value.filter(entry => visiblePaths.has(entry.path))
+  const missingDurations = visible.filter(entry => durations.value[entry.path] === undefined).map(entry => entry.path)
+  if (missingDurations.length) {
+    for (const path of missingDurations) durations.value[path] = null
+    try { Object.assign(durations.value, await MediaDurations(missingDurations)) } catch {}
+  }
+  const missingThumbnails = visible.filter(entry => entry.kind === 'video' && !thumbnailReady.value[entry.path] && !thumbnailAttempted.has(entry.path)).map(entry => entry.path)
+  const coveredByActiveRun = thumbnailProgress.value.active && !thumbnailProgress.value.paused && missingThumbnails.every(path => thumbnailRunPaths.includes(path))
+  if (missingThumbnails.length && !coveredByActiveRun) startThumbnailQueue(missingThumbnails)
+}
+
+function scrollToCurrent() {
+  queueList.value?.querySelector('.queue-item.current')?.scrollIntoView({ block: 'nearest' })
+}
 
 function prioritizeVideoPaths(items, activeIndex, limit = 0) {
   const videoEntries = []
@@ -456,6 +550,7 @@ function prioritizeVideoPaths(items, activeIndex, limit = 0) {
 
 function applyThumbnailProgress(status) {
   thumbnailProgress.value = status
+  if (!status.active && status.total && status.completed >= status.total) thumbnailRunPaths.forEach(path => thumbnailAttempted.add(path))
   if (status.completedPaths?.length) {
     let changed = false
     for (const path of status.completedPaths) {
@@ -475,10 +570,13 @@ async function refreshThumbnailProgress() {
   if (!thumbnailProgress.value.active) window.clearInterval(thumbnailPollTimer)
 }
 
-function startThumbnailQueue(forceAll = false) {
-  const isLargeQueue = queue.value.length > 30
-  const limit = (isLargeQueue && !forceAll) ? 30 : 0
-  const paths = prioritizeVideoPaths(queue.value, index.value, limit)
+// Without explicit paths, only the 30 videos around the current one are generated (D19); scrolling covers the rest.
+function startThumbnailQueue(visibleOnly = null) {
+  const limit = queue.value.length > 30 ? 30 : 0
+  const paths = visibleOnly ?? prioritizeVideoPaths(queue.value, index.value, limit)
+  thumbnailRunPaths = paths
+  // Rows the user scrolled to are a small batch they asked to see, so they are not held back during playback.
+  const holdForPlayback = playing.value && !visibleOnly
   const run = ++thumbnailRun
   window.clearInterval(thumbnailPollTimer)
   pausedForPlayback = false
@@ -489,7 +587,7 @@ function startThumbnailQueue(forceAll = false) {
   thumbnailProgress.value = { active: true, paused: false, completed: 0, total: paths.length, current: '', completedPaths: [] }
   thumbnailPollTimer = window.setInterval(() => { if (run === thumbnailRun) refreshThumbnailProgress() }, 350)
 
-  if (playing.value) {
+  if (holdForPlayback) {
     pausedForPlayback = true
   }
 
@@ -497,7 +595,7 @@ function startThumbnailQueue(forceAll = false) {
     .catch(error => notify('error', t('thumbnails.errorTitle'), String(error)))
     .finally(() => { if (run === thumbnailRun) refreshThumbnailProgress() })
 
-  if (playing.value) {
+  if (holdForPlayback) {
     PauseThumbnailGeneration().then(refreshThumbnailProgress).catch(() => {})
   }
 }
@@ -525,23 +623,39 @@ async function clearThumbnails() {
     await ClearThumbnailCache()
     thumbnailRevision.value++
     thumbnailReady.value = {}
+    thumbnailAttempted.clear()
+    loadVisibleRows()
     thumbnailProgress.value = { active: false, paused: false, completed: 0, total: 0, current: '', completedPaths: [] }
     notify('success', t('thumbnails.clearedTitle'), t('thumbnails.cleared'))
   } catch (error) { notify('error', t('thumbnails.clearErrorTitle'), String(error)) }
 }
 
-async function copyFullPath() {
-  if (!item.value?.path) return
+// Actions from the native playlist row menu (built in playlist_menu.go).
+async function handlePlaylistAction(action, path) {
+  const entryIndex = queue.value.findIndex(entry => entry.path === path)
+  if (entryIndex < 0) return
+  const entry = queue.value[entryIndex]
+  if (action === 'play') select(entryIndex, true)
+  else if (action === 'reveal') RevealInFolder(path).catch(error => notify('error', t('playlistMenu.revealErrorTitle'), String(error)))
+  else if (action === 'copy') copyPath(path)
+  else if (action === 'delete') requestDelete(entry)
+}
+
+async function copyPath(path) {
   try {
-    await Clipboard.SetText(item.value.path)
-    notify('success', t('pathCopy.successTitle'), item.value.path)
+    await Clipboard.SetText(path)
+    notify('success', t('pathCopy.successTitle'), path)
   } catch (error) { notify('error', t('pathCopy.errorTitle'), String(error)) }
+}
+
+function copyFullPath() {
+  if (item.value?.path) copyPath(item.value.path)
 }
 
 async function navigateDirectory(direction) {
   if (!item.value) return
   const activePath = item.value.path
-  const items = await DirectoryVideos(activePath)
+  const items = await folderItems(activePath)
   const activeIndex = items.findIndex(entry => entry.path === activePath)
   const target = activeIndex + direction
   if (target < 0 || target >= items.length) return
@@ -550,10 +664,13 @@ async function navigateDirectory(direction) {
 }
 
 let wasPlayingBeforeDelete = false
+const deleteTarget = ref(null)
 
-function requestDelete() {
-  if (!item.value) { notify('error', t('error.noVideoTitle'), t('delete.noVideo')); return }
+// Deletes the playing video by default; the playlist context menu passes any other row.
+function requestDelete(target = item.value) {
+  if (!target) { notify('error', t('error.noVideoTitle'), t('delete.noVideo')); return }
   if (processing.value) { notify('error', t('delete.busyTitle'), t('delete.busy')); return }
+  deleteTarget.value = target
   wasPlayingBeforeDelete = playing.value || !!(video.value && !video.value.paused)
   showDeleteDialog.value = true
 }
@@ -561,11 +678,25 @@ function requestDelete() {
 function closeDeleteDialog() {
   showDeleteDialog.value = false
   wasPlayingBeforeDelete = false
+  deleteTarget.value = null
 }
 
-async function deleteCurrent() {
-  if (!item.value || processing.value) return
-  const deleting = item.value
+function forgetDeletedThumbnail(path) {
+  if (thumbnailReady.value[path]) {
+    delete thumbnailReady.value[path]
+    thumbnailReady.value = { ...thumbnailReady.value }
+  }
+  if (thumbnailProgress.value.completedPaths?.includes(path)) {
+    thumbnailProgress.value.completedPaths = thumbnailProgress.value.completedPaths.filter(p => p !== path)
+    thumbnailProgress.value.completed = Math.max(0, thumbnailProgress.value.completed - 1)
+    thumbnailProgress.value.total = Math.max(0, thumbnailProgress.value.total - 1)
+  }
+}
+
+async function confirmDelete() {
+  const deleting = deleteTarget.value ?? item.value
+  if (!deleting || processing.value) return
+  if (deleting.path !== item.value?.path) return deleteOtherRow(deleting)
   const wasPlaying = wasPlayingBeforeDelete || playing.value || !!(video.value && !video.value.paused)
   wasPlayingBeforeDelete = false
   showDeleteDialog.value = false
@@ -587,15 +718,7 @@ async function deleteCurrent() {
   playing.value = false
   try {
     await DeleteVideo(deleting.path)
-    if (thumbnailReady.value[deleting.path]) {
-      delete thumbnailReady.value[deleting.path]
-      thumbnailReady.value = { ...thumbnailReady.value }
-    }
-    if (thumbnailProgress.value.completedPaths?.includes(deleting.path)) {
-      thumbnailProgress.value.completedPaths = thumbnailProgress.value.completedPaths.filter(p => p !== deleting.path)
-      thumbnailProgress.value.completed = Math.max(0, thumbnailProgress.value.completed - 1)
-      thumbnailProgress.value.total = Math.max(0, thumbnailProgress.value.total - 1)
-    }
+    forgetDeletedThumbnail(deleting.path)
     const currentIndex = index.value
     const hasNext = queue.value.length > 1
     const nextIndex = currentIndex >= queue.value.length - 1 ? Math.max(0, queue.value.length - 2) : currentIndex
@@ -610,11 +733,28 @@ async function deleteCurrent() {
     index.value = nextIndex
     notify('success', t('delete.successTitle'), deleting.name)
   } catch (error) { notify('error', t('delete.errorTitle'), String(error)) }
-  finally { processing.value = '' }
+  finally { processing.value = ''; deleteTarget.value = null }
+}
+
+// A row other than the playing one is removed without interrupting playback.
+async function deleteOtherRow(deleting) {
+  showDeleteDialog.value = false
+  wasPlayingBeforeDelete = false
+  processing.value = 'delete'
+  try {
+    await DeleteVideo(deleting.path)
+    forgetDeletedThumbnail(deleting.path)
+    const playingPath = item.value?.path
+    queue.value = queue.value.filter(entry => entry.path !== deleting.path)
+    index.value = Math.max(0, queue.value.findIndex(entry => entry.path === playingPath))
+    notify('success', t('delete.successTitle'), deleting.name)
+  } catch (error) { notify('error', t('delete.errorTitle'), String(error)) }
+  finally { processing.value = ''; deleteTarget.value = null }
 }
 
 function loaded(event) {
   duration.value = event.currentTarget.duration
+  if (item.value && Number.isFinite(duration.value) && duration.value > 0) durations.value[item.value.path] = duration.value
   event.currentTarget.volume = volume.value
   event.currentTarget.playbackRate = speed.value
   mediaInfo.value = { ...mediaInfo.value, width: mediaInfo.value?.width || event.currentTarget.videoWidth, height: mediaInfo.value?.height || event.currentTarget.videoHeight, duration: mediaInfo.value?.duration || event.currentTarget.duration }
@@ -623,7 +763,7 @@ function loaded(event) {
 function onKey(event) {
   if (event.key === 'Escape' && showTranscodeDialog.value) { showTranscodeDialog.value = false; return }
   if (event.key === 'Escape' && showDeleteDialog.value) { closeDeleteDialog(); return }
-  if (!event.repeat && event.key === 'Enter' && showDeleteDialog.value) { event.preventDefault(); deleteCurrent(); return }
+  if (!event.repeat && event.key === 'Enter' && showDeleteDialog.value) { event.preventDefault(); confirmDelete(); return }
   if (event.key === 'Escape' && showSheetDialog.value) { showSheetDialog.value = false; return }
   if (event.key === 'Escape' && showShortcuts.value) { showShortcuts.value = false; return }
   if (showDeleteDialog.value || showTranscodeDialog.value || showShortcuts.value) return
@@ -661,6 +801,8 @@ watch(playing, isPlaying => {
     }
   }
 })
+watch([() => queue.value.map(entry => entry.path).join('\n'), showQueue], () => nextTick(observeQueueRows))
+watch(() => item.value?.path, () => nextTick(scrollToCurrent))
 watch(() => queue.value.map(entry => entry.path).join('\n'), (newPathsStr, oldPathsStr) => {
   if (!newPathsStr) return
   if (oldPathsStr) {
@@ -668,9 +810,11 @@ watch(() => queue.value.map(entry => entry.path).join('\n'), (newPathsStr, oldPa
     const hasNewPaths = newPathsStr.split('\n').some(path => !oldSet.has(path))
     if (!hasNewPaths) return
   }
-  startThumbnailQueue(false)
+  startThumbnailQueue()
 }, { immediate: true })
-watch(item, async value => {
+// Keyed by path so reloading the folder or playlist does not restart the video that is already playing.
+watch(() => item.value?.path, async () => {
+  const value = item.value
   splitMarkers.value = []
   proxyFallbackAttempted = false
   const run = ++playbackRun
@@ -787,7 +931,8 @@ watch(muted, value => { if (nativeEngine.value) video.value.setMuted(value) })
 watch(subtitle, value => { if (nativeEngine.value) video.value.setSubtitle(value?.path) })
 
 onMounted(() => {
-  initNativeEngine()
+  // Files opened from Finder before the UI loaded are queued in the backend until the engine is chosen.
+  initNativeEngine().then(PendingSystemFiles).then(files => handleDroppedFiles(files)).catch(() => {})
   window.addEventListener('keydown', onKey)
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('dragenter', onWindowDragOver)
@@ -795,9 +940,12 @@ onMounted(() => {
   window.addEventListener('dragleave', onWindowDragLeave)
   window.addEventListener('drop', onWindowDrop)
   Events.On('files-dropped', onWailsFilesDropped)
+  Events.On('playlist:action', ({ data }) => handlePlaylistAction(data.action, decodeURIComponent(String(data.data).trim())))
 })
 onBeforeUnmount(() => {
   stageObserver?.disconnect()
+  queueObserver?.disconnect()
+  window.clearTimeout(visibleTimer)
   window.removeEventListener('resize', updateVideoArea)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('keyup', onKeyUp)
@@ -829,12 +977,12 @@ onBeforeUnmount(() => {
       <nav>
         <span class="nav-title">{{ t('library.title') }}</span>
         <button class="open-button" @click="openVideos"><FolderOpen :size="19" />{{ t('library.openVideo') }}</button>
-        <button class="nav-item" :class="{ selected: libraryView === 'folder' }"><Film :size="18" />{{ t('library.allVideos') }}<span>{{ libraryView === 'folder' ? queue.length : '' }}</span></button>
+        <button class="nav-item" :class="{ selected: item && libraryView === 'folder' }" :disabled="!item" @click="loadFolder"><Film :size="18" />{{ t('library.folder') }}<span>{{ libraryView === 'folder' ? queue.length : '' }}</span></button>
         <button class="nav-item" :class="{ selected: libraryView === 'recent' }" @click="loadRecent"><RotateCcw :size="18" />{{ t('library.recent') }}</button>
       </nav>
-      <div class="media-sidebar">
+      <div v-if="item" class="media-sidebar">
         <span>{{ t('mediaInfo.title') }}</span>
-        <dl v-if="item">
+        <dl>
           <div><dt>{{ t('mediaInfo.video') }}</dt><dd>{{ mediaInfo?.videoCodec?.toUpperCase() || t('mediaInfo.unknown') }}</dd></div>
           <div><dt>{{ t('mediaInfo.audio') }}</dt><dd>{{ mediaInfo?.audioCodec?.toUpperCase() || t('mediaInfo.unknown') }}</dd></div>
           <div><dt>{{ t('mediaInfo.dimensions') }}</dt><dd>{{ mediaInfo?.width ? `${mediaInfo.width}×${mediaInfo.height}` : '—' }}</dd></div>
@@ -842,20 +990,19 @@ onBeforeUnmount(() => {
           <div><dt>FPS</dt><dd>{{ mediaInfo?.fps || '—' }}</dd></div>
           <div><dt>{{ t('mediaInfo.file') }}</dt><dd>{{ fileSize(mediaInfo?.size) }}</dd></div>
         </dl>
-        <p v-else>{{ t('mediaInfo.empty') }}</p>
       </div>
       <button class="shortcut-trigger" @click="showShortcuts = true"><Keyboard :size="18" /><span>{{ t('shortcuts.open') }}</span></button>
     </aside>
 
     <section class="player-shell">
       <header class="topbar">
-        <div><span class="eyebrow">{{ t('nowPlaying') }}</span><span class="topbar-file"><strong :title="item?.path || item?.name">{{ item?.name || t('selectVideo') }}</strong><button class="copy-path" :disabled="!item" :aria-label="t('pathCopy.action')" :title="t('pathCopy.action')" @click="copyFullPath"><Copy :size="14" /></button></span></div>
+        <div><span v-if="item" class="topbar-file"><strong :title="item.path">{{ item.name }}</strong><button class="copy-path" :disabled="!item" :aria-label="t('pathCopy.action')" :title="t('pathCopy.action')" @click="copyFullPath"><Copy :size="14" /></button></span></div>
         <div class="topbar-actions">
           <label class="language-picker" :title="t('language.label')"><Languages :size="16" /><select :value="locale" :aria-label="t('language.label')" @change="changeLanguage"><option v-for="language in locales" :key="language.code" :value="language.code">{{ language.label }}</option></select><ChevronDown :size="12" /></label>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'split', marked: splitMarkers.length }" :aria-label="splitMarkers.length ? t('actions.multiSplit', { count: splitMarkers.length }) : t('actions.split')" :title="splitMarkers.length ? t('actions.multiSplitTitle', { count: splitMarkers.length }) : t('actions.splitTitle')" @click="splitAtMarkers"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /><span v-if="splitMarkers.length" class="marker-count">{{ splitMarkers.length }}</span></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" :aria-label="t('actions.contactSheet')" :title="t('actions.contactSheetTitle')" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'transcode' || processing === 'options', 'can-cancel': processing === 'transcode' }" :disabled="!item || item.kind !== 'video' || (!!processing && processing !== 'transcode')" :aria-label="processing === 'transcode' ? t('transcode.cancelAction') : t('actions.transcode')" :title="processing === 'transcode' ? t('transcode.cancelAction') : t('actions.transcodeTitle')" @click="processing === 'transcode' ? cancelTranscode() : requestTranscode()"><X v-if="processing === 'transcode'" :size="19" /><LoaderCircle v-else-if="processing === 'options'" class="spin" :size="20" /><RefreshCw v-else :size="19" /></button>
-          <button class="icon-btn danger" :disabled="processing === 'delete'" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="requestDelete"><Trash2 :size="19" /></button>
+          <button class="icon-btn danger" :disabled="processing === 'delete'" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="requestDelete()"><Trash2 :size="19" /></button>
           <button class="icon-btn" :class="{ active: showQueue }" :aria-label="t('actions.showQueue')" :title="t('actions.showQueue')" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
         </div>
       </header>
@@ -870,13 +1017,17 @@ onBeforeUnmount(() => {
           <div class="empty-icon"><Film :size="42" /></div>
           <h1>{{ t('empty.title') }}</h1><p>{{ t('empty.description') }}</p>
           <button @click="openVideos"><FolderOpen :size="18" />{{ t('library.openVideo') }}</button>
-          <small>{{ t('empty.formats') }}</small>
         </div>
         <div class="bottom-fade" />
+        <div v-if="item && splitMarkers.length" class="marker-bar">
+          <Flag :size="15" /><span>{{ t('markers.count', { count: splitMarkers.length }) }}</span>
+          <button class="marker-bar-primary" :disabled="!!processing" @click="splitAtMarkers"><Scissors :size="15" />{{ t('markers.splitInto', { parts: splitMarkers.length + 1 }) }}</button>
+          <button :disabled="!!processing" @click="splitMarkers = []">{{ t('markers.clear') }}</button>
+        </div>
       </div>
 
-      <div class="controls">
-        <div class="timeline-row"><span>{{ fmt(current) }}</span><div class="timeline-track"><input :aria-label="t('player.progress')" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @pointerdown="startScrub" @input="onScrub" @change="endScrub" @pointerup="endScrub" @pointercancel="endScrub"><button v-for="marker in markerPositions" :key="marker.seconds" class="split-marker" :style="{ left: marker.left }" :aria-label="t('markers.removeAt', { time: fmt(marker.seconds) })" :title="t('markers.removeAt', { time: fmt(marker.seconds) })" @click="removeSplitMarker(marker.seconds)"><span>{{ fmt(marker.seconds) }}</span></button></div><span>{{ fmt(duration) }}</span></div>
+      <div class="controls" :class="{ idle: !item }">
+        <div class="timeline-row"><span>{{ fmt(current) }}</span><div class="timeline-track" :title="item ? t('markers.timelineHint') : ''" @contextmenu.prevent="toggleMarkerAtPointer"><input :aria-label="t('player.progress')" type="range" min="0" :max="duration || 0" step=".1" :value="current" :style="{ '--progress': progress }" @pointerdown="event => event.button === 0 && startScrub()" @input="onScrub" @change="endScrub" @pointerup="endScrub" @pointercancel="endScrub"><button v-for="marker in markerPositions" :key="marker.seconds" class="split-marker" :style="{ left: marker.left }" :aria-label="t('markers.removeAt', { time: fmt(marker.seconds) })" :title="t('markers.removeAt', { time: fmt(marker.seconds) })" @click="removeSplitMarker(marker.seconds)" @contextmenu.prevent.stop="removeSplitMarker(marker.seconds)"><span>{{ fmt(marker.seconds) }}</span></button></div><span>{{ fmt(duration) }}</span></div>
         <div class="control-row">
           <div class="volume-group">
             <button class="icon-btn" :aria-label="muted ? t('player.unmute') : t('player.mute')" @click="muted = !muted"><VolumeX v-if="muted || volume === 0" :size="20" /><Volume2 v-else :size="20" /></button>
@@ -890,7 +1041,7 @@ onBeforeUnmount(() => {
             <button class="icon-btn" :aria-label="t('player.seekForward', { seconds: seekStep })" @click="seekBy(seekStep)"><RotateCw :size="19" /></button>
           </div>
           <div class="tools">
-            <button class="tool marker-tool" :class="{ active: splitMarkers.length }" :disabled="!item || processing" :title="t('markers.addTitle')" @click="toggleSplitMarker"><Flag :size="18" /><span>{{ splitMarkers.length ? t('markers.count', { count: splitMarkers.length }) : t('markers.add') }}</span><kbd>B</kbd></button>
+            <button class="tool marker-tool" :class="{ active: splitMarkers.length }" :disabled="!item || processing" :title="t('markers.addTitle')" @click="toggleSplitMarker()"><Flag :size="18" /><span>{{ t('markers.add') }}</span><kbd>B</kbd></button>
             <label class="seek-step" :title="t('player.seekDuration')"><input v-model.number="seekStep" :aria-label="t('player.seekSeconds')" type="number" min="1" max="300" step="1" @change="normaliseSeekStep"><span>{{ t('player.secondsShort') }}</span></label>
             <button class="tool" :class="{ active: subtitle }" @click="openSubtitle"><Captions :size="20" /><span>{{ t('player.subtitles') }}</span></button>
             <label class="speed"><Gauge :size="19" /><select v-model.number="speed" :aria-label="t('player.speed')"><option v-for="value in speeds" :key="value" :value="value">{{ value }}×</option></select><ChevronDown :size="14" /></label>
@@ -901,28 +1052,31 @@ onBeforeUnmount(() => {
     </section>
 
     <aside v-if="showQueue" ref="queuePanel" class="queue">
-      <div class="queue-head"><div><span>{{ t('queue.playlist') }}</span><strong>{{ t('queue.upNext') }}</strong></div><button class="icon-btn" :aria-label="t('queue.close')" @click="showQueue = false"><X :size="20" /></button></div>
-      <div v-if="queue.some(entry => entry.kind === 'video')" class="thumbnail-progress">
-        <div class="thumbnail-progress-head"><span><strong>{{ t('thumbnails.title') }}</strong><small v-if="thumbnailProgress.active">{{ thumbnailProgress.paused ? t('thumbnails.paused') : t('thumbnails.generating', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><small v-else-if="thumbnailProgress.total">{{ t('thumbnails.complete', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><small v-else>{{ t('thumbnails.cacheEmpty') }}</small></span><div>
-          <button v-if="thumbnailProgress.active" :aria-label="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" :title="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" @click="toggleThumbnailPause"><Play v-if="thumbnailProgress.paused" :size="14" /><Pause v-else :size="14" /></button>
-          <button v-if="thumbnailProgress.active" :aria-label="t('thumbnails.stop')" :title="t('thumbnails.stop')" @click="stopThumbnailQueue"><X :size="15" /></button>
-          <button v-else :aria-label="t('thumbnails.generate')" :title="t('thumbnails.generate')" @click="startThumbnailQueue(true)"><RefreshCw :size="14" /></button>
-          <button :aria-label="t('thumbnails.clear')" :title="t('thumbnails.clear')" @click="clearThumbnails"><Trash2 :size="14" /></button>
+      <div class="queue-head">
+        <strong>{{ t('queue.playlist') }}<span v-if="queue.length">{{ queue.length }}</span></strong>
+        <div>
+          <label v-if="libraryView === 'folder' && queue.length > 1" class="queue-sort" :title="t('queue.sortBy')"><ArrowUpDown :size="14" /><select v-model="sortMode" :aria-label="t('queue.sortBy')"><option value="name">{{ t('queue.sortName') }}</option><option value="modified">{{ t('queue.sortModified') }}</option><option value="duration">{{ t('queue.sortDuration') }}</option></select></label>
+          <button v-if="hasVideos" class="icon-btn small" :aria-label="t('thumbnails.clear')" :title="t('thumbnails.clear')" @click="clearThumbnails"><Trash2 :size="15" /></button>
+          <button class="icon-btn" :aria-label="t('queue.close')" :title="t('queue.close')" @click="showQueue = false"><X :size="20" /></button>
+        </div>
+      </div>
+      <div v-if="thumbnailProgress.active" class="thumbnail-progress">
+        <div class="thumbnail-progress-head"><small>{{ thumbnailProgress.paused ? t('thumbnails.paused', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) : t('thumbnails.generating', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><div>
+          <button :aria-label="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" :title="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" @click="toggleThumbnailPause"><Play v-if="thumbnailProgress.paused" :size="14" /><Pause v-else :size="14" /></button>
+          <button :aria-label="t('thumbnails.stop')" :title="t('thumbnails.stop')" @click="stopThumbnailQueue"><X :size="15" /></button>
         </div></div>
         <div class="thumbnail-progress-track"><i :style="{ width: thumbnailPercent }" /></div>
-        <small v-if="thumbnailProgress.active && thumbnailProgress.current" class="thumbnail-current" :title="thumbnailProgress.current">{{ thumbnailProgress.current }}</small>
       </div>
-      <div class="queue-list">
+      <div ref="queueList" class="queue-list">
         <template v-if="queue.length">
-          <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: i === index }" @click="select(i, true)">
+          <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: i === index }" :data-path="entry.path" :style="{ '--custom-contextmenu': 'playlist-item', '--custom-contextmenu-data': encodeURIComponent(entry.path) }" @click="select(i, true)">
             <span class="queue-number"><Speaker v-if="i === index" :size="15" /><template v-else>{{ String(i + 1).padStart(2, '0') }}</template></span>
             <span class="thumb"><img v-if="entry.kind === 'video' && thumbnailReady[entry.path]" :src="`${entry.thumbnailUrl}&v=${thumbnailRevision}`" alt="" loading="lazy" @error="$event.currentTarget.style.display = 'none'"><LoaderCircle v-else-if="entry.kind === 'video' && thumbnailProgress.active && thumbnailProgress.current === entry.name" class="spin" :size="18" /><Film v-else :size="22" /><i v-if="i === index && playing"><span /><span /><span /></i></span>
-            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ entry.kind === 'audio' ? t('mediaInfo.audio') : t('queue.localVideo') }}</small></span><ChevronRight :size="16" />
+            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ [fileType(entry.name), durations[entry.path] ? fmt(durations[entry.path]) : '', fileSize(entry.size)].filter(Boolean).join(' · ') }}</small></span><ChevronRight :size="16" />
           </button>
         </template>
         <div v-else class="queue-empty"><ListVideo :size="28" /><p>{{ t('queue.empty') }}</p><button @click="openVideos">{{ t('queue.addVideo') }}</button></div>
       </div>
-      <button class="add-more" @click="openVideos"><FolderOpen :size="17" />{{ t('queue.addMore') }}</button>
     </aside>
 
     <Transition name="notice">
@@ -952,7 +1106,7 @@ onBeforeUnmount(() => {
 
     <div v-if="showSheetDialog" class="shortcut-modal sheet-modal" role="dialog" aria-modal="true" :aria-label="t('sheet.settings')" @click.self="showSheetDialog = false">
       <section>
-        <header><div><span>{{ t('sheet.extractor') }}</span><strong>{{ t('sheet.create') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showSheetDialog = false"><X :size="20" /></button></header>
+        <header><div><strong>{{ t('sheet.create') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showSheetDialog = false"><X :size="20" /></button></header>
         <p>{{ t('sheet.description') }}</p>
         <div class="sheet-options">
           <label><span>{{ t('sheet.frameCount') }}<small>{{ t('sheet.maxFrames') }}</small></span><span class="sheet-input"><input v-model.number="sheetFrameCount" type="number" min="1" max="60" step="1" autofocus><small>{{ t('sheet.frames') }}</small></span></label>
@@ -965,15 +1119,15 @@ onBeforeUnmount(() => {
 
     <div v-if="showDeleteDialog" class="shortcut-modal sheet-modal delete-modal" role="dialog" aria-modal="true" :aria-label="t('delete.title')" @click.self="closeDeleteDialog">
       <section>
-        <header><div><span>{{ t('delete.label') }}</span><strong>{{ t('delete.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="closeDeleteDialog"><X :size="20" /></button></header>
-        <p>{{ t('delete.confirm', { name: item?.name }) }}</p>
+        <header><div><strong>{{ t('delete.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="closeDeleteDialog"><X :size="20" /></button></header>
+        <p>{{ t('delete.confirm', { name: (deleteTarget ?? item)?.name }) }}</p>
         <footer><button class="cancel" @click="closeDeleteDialog">{{ t('delete.cancel') }}</button><button class="confirm danger" autofocus @click="deleteCurrent"><Trash2 :size="17" />{{ t('delete.action') }}</button></footer>
       </section>
     </div>
 
     <div v-if="showTranscodeDialog" class="shortcut-modal sheet-modal transcode-modal" role="dialog" aria-modal="true" :aria-label="t('transcode.title')" @click.self="showTranscodeDialog = false">
       <section>
-        <header><div><span>{{ t('transcode.label') }}</span><strong>{{ t('transcode.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showTranscodeDialog = false"><X :size="20" /></button></header>
+        <header><div><strong>{{ t('transcode.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showTranscodeDialog = false"><X :size="20" /></button></header>
         <p>{{ t('transcode.description', { name: item?.name }) }}</p>
         <div class="transcode-options">
           <label v-for="option in transcodeOptions" :key="option.id" :class="{ selected: selectedTranscode === option.id }">
@@ -995,11 +1149,12 @@ onBeforeUnmount(() => {
 
     <div v-if="showShortcuts" class="shortcut-modal" role="dialog" aria-modal="true" :aria-label="t('shortcuts.open')" @click.self="showShortcuts = false">
       <section>
-        <header><div><span>{{ t('shortcuts.keyboard') }}</span><strong>{{ t('shortcuts.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showShortcuts = false"><X :size="20" /></button></header>
+        <header><div><strong>{{ t('shortcuts.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="showShortcuts = false"><X :size="20" /></button></header>
         <dl>
           <div><dt>{{ t('shortcuts.playPause') }}</dt><dd><kbd>Space</kbd></dd></div>
           <div><dt>{{ t('shortcuts.seek', { seconds: seekStep }) }}</dt><dd><kbd>←</kbd><kbd>→</kbd></dd></div>
           <div><dt>{{ t('shortcuts.splitMarker') }}</dt><dd><kbd>B</kbd></dd></div>
+          <div><dt>{{ t('shortcuts.markerAtPointer') }}</dt><dd><kbd>{{ t('shortcuts.rightClickTimeline') }}</kbd></dd></div>
           <div><dt>{{ t('shortcuts.previousNext') }}</dt><dd><kbd>⌘←</kbd><kbd>⌘→</kbd></dd></div>
           <div><dt>{{ t('shortcuts.delete') }}</dt><dd><kbd>Del</kbd><kbd>⌘⌫</kbd></dd></div>
           <div><dt>{{ t('shortcuts.fullscreen') }}</dt><dd><kbd>F</kbd></dd></div>

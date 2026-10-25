@@ -142,6 +142,9 @@ func main() {
 		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHidden, Backdrop: backdrop},
 	})
 	service.window = win
+	app.Event.OnApplicationEvent(events.Common.ApplicationOpenedWithFile, func(event *application.ApplicationEvent) {
+		service.openFromSystem(event.Context().Filename())
+	})
 	win.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
 		files := event.Context().DroppedFiles()
 		application.Get().Event.Emit("files-dropped", map[string]any{

@@ -45,6 +45,15 @@ export function MarkPlayed(path: string): $CancellablePromise<void> {
     return $Call.ByID(180312699, path);
 }
 
+/**
+ * MediaDurations returns durations in seconds for the authorised paths the playlist currently shows.
+ */
+export function MediaDurations(paths: string[]): $CancellablePromise<{ [_ in string]?: number }> {
+    return $Call.ByID(2125513636, paths).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
 export function OpenDroppedFiles(paths: string[]): $CancellablePromise<$models.MediaItem[]> {
     return $Call.ByID(2280095460, paths).then(($result: any) => {
         return $$createType1($result);
@@ -71,6 +80,15 @@ export function OpenVideos(): $CancellablePromise<$models.MediaItem[]> {
 
 export function PauseThumbnailGeneration(): $CancellablePromise<void> {
     return $Call.ByID(3891602989);
+}
+
+/**
+ * PendingSystemFiles returns files the OS asked to open before the frontend loaded and marks it ready.
+ */
+export function PendingSystemFiles(): $CancellablePromise<string[]> {
+    return $Call.ByID(2783365112).then(($result: any) => {
+        return $$createType4($result);
+    });
 }
 
 /**
@@ -129,7 +147,7 @@ export function PreparePlaybackForce(path: string): $CancellablePromise<string> 
 
 export function ProbeMedia(path: string): $CancellablePromise<$models.MediaInfo> {
     return $Call.ByID(614641911, path).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType5($result);
     });
 }
 
@@ -143,15 +161,22 @@ export function ResumeThumbnailGeneration(): $CancellablePromise<void> {
     return $Call.ByID(1934657156);
 }
 
+/**
+ * RevealInFolder opens the system file manager with the file selected.
+ */
+export function RevealInFolder(path: string): $CancellablePromise<void> {
+    return $Call.ByID(1947324723, path);
+}
+
 export function SplitVideo(path: string, seconds: number): $CancellablePromise<$models.SplitResult> {
     return $Call.ByID(2078186822, path, seconds).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType6($result);
     });
 }
 
 export function SplitVideoAtMarkers(path: string, seconds: number[]): $CancellablePromise<$models.MultiSplitResult> {
     return $Call.ByID(1021854198, path, seconds).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -161,25 +186,25 @@ export function StopThumbnailGeneration(): $CancellablePromise<void> {
 
 export function ThumbnailGenerationStatus(): $CancellablePromise<$models.ThumbnailProgress> {
     return $Call.ByID(1427037375).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType8($result);
     });
 }
 
 export function TranscodeOptions(path: string): $CancellablePromise<$models.TranscodeOption[]> {
     return $Call.ByID(3683531566, path).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
 export function TranscodeStatus(): $CancellablePromise<$models.TranscodeProgress> {
     return $Call.ByID(717926866).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType11($result);
     });
 }
 
 export function TranscodeVideo(path: string, optionID: string, trashOriginal: boolean): $CancellablePromise<$models.TranscodeResult> {
     return $Call.ByID(2627797619, path, optionID, trashOriginal).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType12($result);
     });
 }
 
@@ -187,11 +212,13 @@ export function TranscodeVideo(path: string, optionID: string, trashOriginal: bo
 const $$createType0 = $models.MediaItem.createFrom;
 const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $models.LocalizationPayload.createFrom;
-const $$createType3 = $models.MediaInfo.createFrom;
-const $$createType4 = $models.SplitResult.createFrom;
-const $$createType5 = $models.MultiSplitResult.createFrom;
-const $$createType6 = $models.ThumbnailProgress.createFrom;
-const $$createType7 = $models.TranscodeOption.createFrom;
-const $$createType8 = $Create.Array($$createType7);
-const $$createType9 = $models.TranscodeProgress.createFrom;
-const $$createType10 = $models.TranscodeResult.createFrom;
+const $$createType3 = $Create.Map($Create.Any, $Create.Any);
+const $$createType4 = $Create.Array($Create.Any);
+const $$createType5 = $models.MediaInfo.createFrom;
+const $$createType6 = $models.SplitResult.createFrom;
+const $$createType7 = $models.MultiSplitResult.createFrom;
+const $$createType8 = $models.ThumbnailProgress.createFrom;
+const $$createType9 = $models.TranscodeOption.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = $models.TranscodeProgress.createFrom;
+const $$createType12 = $models.TranscodeResult.createFrom;

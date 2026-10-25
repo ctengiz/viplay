@@ -65,10 +65,32 @@ jobs:
         with:
           name: ViPlay-macOS-bundled-sources
           path: dist/sources/**
-      - name: Publish macOS release
-        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+      # Every platform attaches its packages to the tag's release; whichever job runs first creates it.
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/ViPlay-macOS.zip dist/sources/* --clobber
+          set -euo pipefail
+          version="$GITHUB_REF_NAME"
+          mkdir -p release
+          case "$RUNNER_OS" in
+            macOS)
+              cp dist/ViPlay-macOS.zip "release/ViPlay-$version-macOS.zip"
+              tar -cf "release/ViPlay-$version-macOS-bundled-sources.tar" -C dist sources
+              ;;
+            Windows)
+              cp bin/ViPlay-amd64-installer.exe "release/ViPlay-$version-windows-amd64-installer.exe"
+              ;;
+            Linux)
+              cp bin/ViPlay.deb "release/ViPlay-$version-linux-amd64.deb"
+              cp bin/ViPlay.rpm "release/ViPlay-$version-linux-amd64.rpm"
+              cp bin/viplay-x86_64.AppImage "release/ViPlay-$version-linux-x86_64.AppImage"
+              cp bin/ViPlay.pkg.tar.zst "release/ViPlay-$version-linux-amd64.pkg.tar.zst"
+              ;;
+          esac
+          gh release view "$version" >/dev/null 2>&1 \
+            || gh release create "$version" --title "ViPlay $version" --generate-notes \
+            || gh release view "$version" >/dev/null
+          gh release upload "$version" release/* --clobber

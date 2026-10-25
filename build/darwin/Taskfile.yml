@@ -72,6 +72,21 @@ tasks:
       - python3 build/darwin/bundle_media.py {{.BIN_DIR}}/{{.APP_NAME}}.app
       - codesign --force --deep --sign - {{.BIN_DIR}}/{{.APP_NAME}}.app
 
+  install:
+    summary: Packages ViPlay, installs it into /Applications, and registers it for Finder's Open With menu
+    deps:
+      - task: package
+    vars:
+      LSREGISTER: /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+      TARGET: /Applications/{{.APP_NAME}}.app
+    cmds:
+      - rm -rf "{{.TARGET}}"
+      - ditto "{{.BIN_DIR}}/{{.APP_NAME}}.app" "{{.TARGET}}"
+      # Only the installed copy should appear under Open With; a copy that was never registered is not an error.
+      - for app in "{{.BIN_DIR}}/{{.APP_NAME}}.app" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"; do [ ! -d "$app" ] || "{{.LSREGISTER}}" -u "$app" 2>/dev/null || true; done
+      - '"{{.LSREGISTER}}" -f "{{.TARGET}}"'
+      - echo "Installed {{.TARGET}}"
+
   run:
     cmds:
       - mkdir -p {{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/{MacOS,Resources}

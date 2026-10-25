@@ -28,6 +28,12 @@ For the active operating system:
 wails3 task package
 ```
 
+On macOS, install the packaged app into `/Applications` and register it for Finder's **Open With** menu:
+
+```bash
+wails3 task install
+```
+
 Distribution artifacts are written under `bin`. Windows builds must run on Windows, macOS application bundles on macOS, and Linux packages on Linux; the CI matrix covers all three platforms.
 
 ## Localization
@@ -48,7 +54,7 @@ Every user-facing feature must include matching English and Turkish translation 
 - Windows and Linux playback of MPG, MPEG, FLV, AVI, WMV, and MKV through cached FFmpeg-generated compatibility proxies
 - WebVTT subtitle loading
 - Keyboard shortcuts: `Space`, `←`, `→`, `F`, `M`, `⌘←` / `⌘→` for folder navigation, and `Del` / `⌘⌫` for disk deletion
-- Lossless FFmpeg stream-copy splitting at keyframes
+- Lossless FFmpeg stream-copy splitting at keyframes; place split markers with `B` or by right-clicking the timeline, then split into parts from the marker bar
 - FFmpeg contact-sheet generation
 - Video/audio codec, container, dimensions, FPS, and file-size information
 - Authorized local media streaming with HTTP range requests

@@ -14,10 +14,10 @@
     !define INFO_PRODUCTNAME "ViPlay"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "0.1.0"
+    !define INFO_PRODUCTVERSION "0.2.0"
 !endif
 !ifndef INFO_COPYRIGHT
-    !define INFO_COPYRIGHT "(c) 2026 ViPlay"
+    !define INFO_COPYRIGHT "Copyright © 2026 Çağatay Tengiz. Licensed under GPL-3.0-or-later."
 !endif
 !ifndef PRODUCT_EXECUTABLE
     !define PRODUCT_EXECUTABLE "${INFO_PROJECTNAME}.exe"
@@ -188,17 +188,17 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
             Goto ok
         ${EndIf}
      ${EndIf}
-
+    
 	SetDetailsPrint both
     DetailPrint "${WAILS_INSTALL_WEBVIEW_DETAILPRINT}"
     SetDetailsPrint listonly
-
+    
     InitPluginsDir
     CreateDirectory "$pluginsdir\webview2bootstrapper"
     SetOutPath "$pluginsdir\webview2bootstrapper"
     File "MicrosoftEdgeWebview2Setup.exe"
     ExecWait '"$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe" /silent /install'
-
+    
     SetDetailsPrint both
     ok:
 !macroend
@@ -228,12 +228,102 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 
 !macro wails.associateFiles
     ; Create file associations
-
+    
+    !insertmacro APP_ASSOCIATE "mp4" "MPEG-4 video" "MPEG-4 video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "m4v" "MPEG-4 video" "MPEG-4 video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "mov" "QuickTime movie" "QuickTime movie" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "webm" "WebM video" "WebM video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "mkv" "Matroska video" "Matroska video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "avi" "AVI video" "AVI video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "wmv" "Windows Media video" "Windows Media video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "asf" "Advanced Systems Format video" "Advanced Systems Format video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "mpg" "MPEG video" "MPEG video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "mpeg" "MPEG video" "MPEG video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "flv" "Flash video" "Flash video" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "mp3" "MP3 audio" "MP3 audio" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "m4a" "MPEG-4 audio" "MPEG-4 audio" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "wav" "WAV audio" "WAV audio" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
+    !insertmacro APP_ASSOCIATE "flac" "FLAC audio" "FLAC audio" "$INSTDIR\icons.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    File "..\icons.ico"
+    
 !macroend
 
 !macro wails.unassociateFiles
     ; Delete app associations
-
+    
+    !insertmacro APP_UNASSOCIATE "mp4" "MPEG-4 video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "m4v" "MPEG-4 video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "mov" "QuickTime movie"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "webm" "WebM video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "mkv" "Matroska video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "avi" "AVI video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "wmv" "Windows Media video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "asf" "Advanced Systems Format video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "mpg" "MPEG video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "mpeg" "MPEG video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "flv" "Flash video"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "mp3" "MP3 audio"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "m4a" "MPEG-4 audio"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "wav" "WAV audio"
+    Delete "$INSTDIR\icons.ico"
+    
+    !insertmacro APP_UNASSOCIATE "flac" "FLAC audio"
+    Delete "$INSTDIR\icons.ico"
+    
 !macroend
 
 !macro CUSTOM_PROTOCOL_ASSOCIATE PROTOCOL DESCRIPTION ICON COMMAND
@@ -252,10 +342,10 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 
 !macro wails.associateCustomProtocols
     ; Create custom protocols associations
-
+    
 !macroend
 
 !macro wails.unassociateCustomProtocols
     ; Delete app custom protocol associations
-
+    
 !macroend

@@ -759,3 +759,52 @@ func TestMediaInfoFromProbe(t *testing.T) {
 		t.Fatalf("unexpected media info: %+v", info)
 	}
 }
+
+func TestSystemOpenQueueBuffersUntilFrontendIsReady(t *testing.T) {
+	var queue systemOpenQueue
+	if queue.add("/a.mkv") || queue.add("/b.mp4") {
+		t.Fatal("files were delivered before the frontend was ready")
+	}
+	if got := queue.take(); len(got) != 2 || got[0] != "/a.mkv" || got[1] != "/b.mp4" {
+		t.Fatalf("take() = %v", got)
+	}
+	if !queue.add("/c.avi") {
+		t.Fatal("files must be delivered immediately once the frontend is ready")
+	}
+	if got := queue.take(); len(got) != 0 {
+		t.Fatalf("delivered files were also buffered: %v", got)
+	}
+}
+
+func TestMediaDurationsProbesAuthorisedPathsOnly(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	root := t.TempDir()
+	input := filepath.Join(root, "clip.mkv")
+	if output, runErr := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=2:size=160x90:rate=12", "-c:v", "mpeg4", input,
+	).CombinedOutput(); runErr != nil {
+		t.Fatalf("create synthetic video: %v: %s", runErr, output)
+	}
+	app := NewApp(newMediaServer())
+	if got := app.MediaDurations([]string{input}); len(got) != 0 {
+		t.Fatalf("unauthorised path was probed: %v", got)
+	}
+	item := app.mediaItem(input)
+	if item.Size == 0 || item.ModTime == 0 {
+		t.Fatalf("media item lacks size or modification time: %+v", item)
+	}
+	got := app.MediaDurations([]string{item.Path})
+	if duration := got[item.Path]; duration < 1.9 || duration > 2.1 {
+		t.Fatalf("duration = %v, want about 2s", duration)
+	}
+}
+
+func TestRevealInFolderRequiresAuthorisedMedia(t *testing.T) {
+	app := NewApp(newMediaServer())
+	if err := app.RevealInFolder("/not/authorised.mkv"); err == nil {
+		t.Fatal("RevealInFolder accepted an unauthorised path")
+	}
+}

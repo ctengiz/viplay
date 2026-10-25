@@ -2,6 +2,219 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 	<dict>
+		<key>CFBundleDocumentTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>mp4</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/mp4</string>
+				<key>CFBundleTypeName</key>
+				<string>MPEG-4 video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>m4v</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/x-m4v</string>
+				<key>CFBundleTypeName</key>
+				<string>MPEG-4 video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>mov</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/quicktime</string>
+				<key>CFBundleTypeName</key>
+				<string>QuickTime movie</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>webm</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/webm</string>
+				<key>CFBundleTypeName</key>
+				<string>WebM video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>mkv</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/x-matroska</string>
+				<key>CFBundleTypeName</key>
+				<string>Matroska video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>avi</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/x-msvideo</string>
+				<key>CFBundleTypeName</key>
+				<string>AVI video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>wmv</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/x-ms-wmv</string>
+				<key>CFBundleTypeName</key>
+				<string>Windows Media video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>asf</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/x-ms-asf</string>
+				<key>CFBundleTypeName</key>
+				<string>Advanced Systems Format video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>mpg</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/mpeg</string>
+				<key>CFBundleTypeName</key>
+				<string>MPEG video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>mpeg</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/mpeg</string>
+				<key>CFBundleTypeName</key>
+				<string>MPEG video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>flv</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>video/x-flv</string>
+				<key>CFBundleTypeName</key>
+				<string>Flash video</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>mp3</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>audio/mpeg</string>
+				<key>CFBundleTypeName</key>
+				<string>MP3 audio</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>m4a</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>audio/mp4</string>
+				<key>CFBundleTypeName</key>
+				<string>MPEG-4 audio</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>wav</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>audio/wav</string>
+				<key>CFBundleTypeName</key>
+				<string>WAV audio</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>flac</string>
+				</array>
+				<key>CFBundleTypeIconFile</key>
+				<string>icons</string>
+				<key>CFBundleTypeMimeType</key>
+				<string>audio/flac</string>
+				<key>CFBundleTypeName</key>
+				<string>FLAC audio</string>
+				<key>CFBundleTypeRole</key>
+				<string>Viewer</string>
+			</dict>
+		</array>
 		<key>CFBundleExecutable</key>
 		<string>ViPlay</string>
 		<key>CFBundleGetInfoString</key>
@@ -15,9 +228,9 @@
 		<key>CFBundlePackageType</key>
 		<string>APPL</string>
 		<key>CFBundleShortVersionString</key>
-		<string>0.1.0</string>
+		<string>0.2.0</string>
 		<key>CFBundleVersion</key>
-		<string>0.1.0</string>
+		<string>0.2.0</string>
 		<key>LSMinimumSystemVersion</key>
 		<string>12.0.0</string>
 		<key>NSHighResolutionCapable</key>

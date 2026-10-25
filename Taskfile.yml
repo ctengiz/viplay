@@ -24,6 +24,12 @@ tasks:
     cmds:
       - task: "{{OS}}:package"
 
+  install:
+    summary: Installs the packaged application (macOS)
+    platforms: [darwin]
+    cmds:
+      - task: darwin:install
+
   run:
     summary: Runs the application
     cmds:

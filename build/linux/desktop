@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=ViPlay
-Comment=Çok platformlu masaüstü video oynatıcı
+Comment=Cross-platform desktop video player
 # The Exec line includes %u to pass the URL to the application
 Exec=/usr/local/bin/ViPlay %u
 Terminal=false
@@ -9,3 +9,5 @@ Type=Application
 Icon=ViPlay
 Categories=Utility;
 StartupWMClass=ViPlay
+
+ 

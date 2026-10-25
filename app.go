@@ -18,6 +18,8 @@ type MediaItem struct {
 	URL          string `json:"url"`
 	ThumbnailURL string `json:"thumbnailUrl"`
 	Kind         string `json:"kind"`
+	Size         int64  `json:"size"`
+	ModTime      int64  `json:"modTime"`
 }
 
 type MediaInfo struct {
@@ -66,6 +68,7 @@ type App struct {
 	transcode   *transcodeManager
 	player      *nativePlayer
 	window      *application.WebviewWindow
+	systemOpen  systemOpenQueue
 	locale      localeState
 }
 
@@ -76,7 +79,9 @@ func NewApp(server *mediaServer) *App {
 }
 
 func (a *App) GetLocalization(locale string) LocalizationPayload {
-	return localizationPayload(a.locale.set(locale))
+	payload := localizationPayload(a.locale.set(locale))
+	a.buildPlaylistMenu()
+	return payload
 }
 
 func (a *App) tr(key string, args ...any) string {
@@ -85,7 +90,11 @@ func (a *App) tr(key string, args ...any) string {
 
 func (a *App) mediaItem(path string) MediaItem {
 	abs := a.server.allow(path)
-	return MediaItem{Name: filepath.Base(abs), Path: abs, URL: "/media?path=" + url.QueryEscape(abs), ThumbnailURL: "/thumbnail?path=" + url.QueryEscape(abs), Kind: mediaKind(abs)}
+	item := MediaItem{Name: filepath.Base(abs), Path: abs, URL: "/media?path=" + url.QueryEscape(abs), ThumbnailURL: "/thumbnail?path=" + url.QueryEscape(abs), Kind: mediaKind(abs)}
+	if info, err := os.Stat(abs); err == nil {
+		item.Size, item.ModTime = info.Size(), info.ModTime().UnixMilli()
+	}
+	return item
 }
 
 func (a *App) OpenVideos() ([]MediaItem, error) {

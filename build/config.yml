@@ -8,10 +8,10 @@ info:
   companyName: "ViPlay"
   productName: "ViPlay"
   productIdentifier: "io.viplay.desktop"
-  description: "Çok platformlu masaüstü video oynatıcı"
-  copyright: "(c) 2026 ViPlay"
+  description: "Cross-platform desktop video player"
+  copyright: "Copyright © 2026 Çağatay Tengiz. Licensed under GPL-3.0-or-later."
   comments: "Built with Go and Wails v3"
-  version: "0.1.0"
+  version: "0.2.0"
 
 # Dev mode configuration
 dev_mode:
@@ -46,17 +46,97 @@ dev_mode:
 # File Associations
 # More information at: https://v3.wails.io/noit/done/yet
 fileAssociations:
-#  - ext: wails
-#    name: Wails
-#    description: Wails Application File
-#    iconName: wailsFileIcon
-#    role: Editor
-#  - ext: jpg
-#    name: JPEG
-#    description: Image File
-#    iconName: jpegFileIcon
-#    role: Editor
-#    mimeType: image/jpeg  # (optional)
+  # Registers ViPlay as a viewer so Finder lists it under Open With; keep in sync with isSupportedMedia.
+  - ext: mp4
+    name: MPEG-4 video
+    description: MPEG-4 video
+    iconName: icons
+    role: Viewer
+    mimeType: video/mp4
+  - ext: m4v
+    name: MPEG-4 video
+    description: MPEG-4 video
+    iconName: icons
+    role: Viewer
+    mimeType: video/x-m4v
+  - ext: mov
+    name: QuickTime movie
+    description: QuickTime movie
+    iconName: icons
+    role: Viewer
+    mimeType: video/quicktime
+  - ext: webm
+    name: WebM video
+    description: WebM video
+    iconName: icons
+    role: Viewer
+    mimeType: video/webm
+  - ext: mkv
+    name: Matroska video
+    description: Matroska video
+    iconName: icons
+    role: Viewer
+    mimeType: video/x-matroska
+  - ext: avi
+    name: AVI video
+    description: AVI video
+    iconName: icons
+    role: Viewer
+    mimeType: video/x-msvideo
+  - ext: wmv
+    name: Windows Media video
+    description: Windows Media video
+    iconName: icons
+    role: Viewer
+    mimeType: video/x-ms-wmv
+  - ext: asf
+    name: Advanced Systems Format video
+    description: Advanced Systems Format video
+    iconName: icons
+    role: Viewer
+    mimeType: video/x-ms-asf
+  - ext: mpg
+    name: MPEG video
+    description: MPEG video
+    iconName: icons
+    role: Viewer
+    mimeType: video/mpeg
+  - ext: mpeg
+    name: MPEG video
+    description: MPEG video
+    iconName: icons
+    role: Viewer
+    mimeType: video/mpeg
+  - ext: flv
+    name: Flash video
+    description: Flash video
+    iconName: icons
+    role: Viewer
+    mimeType: video/x-flv
+  - ext: mp3
+    name: MP3 audio
+    description: MP3 audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/mpeg
+  - ext: m4a
+    name: MPEG-4 audio
+    description: MPEG-4 audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/mp4
+  - ext: wav
+    name: WAV audio
+    description: WAV audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/wav
+  - ext: flac
+    name: FLAC audio
+    description: FLAC audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/flac
 
 # Other data
 other:

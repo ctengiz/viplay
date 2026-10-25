@@ -17,6 +17,9 @@
 - `media_analysis.go`: MP4 analysis, thumbnails, and recent-store logic
 - `thumbnail_jobs.go`: sequential thumbnail generation state, pause/stop controls, and cache cleanup
 - `media_tools.go`: FFmpeg split/contact-sheet/transcode logic and H.264 thumbnail decoder
+- `media_durations.go`: cached, concurrent duration probing for playlist rows (pure Go MP4 reader, ffprobe otherwise)
+- `playlist_menu.go`: native playlist row context menu (rebuilt per locale) and Reveal in Finder/folder
+- `system_open.go`: queues files the OS asks ViPlay to open (Finder Open With) until the frontend is ready
 - `player.go`: engine-neutral player bindings and authorization checks
 - `player_darwin.go`, `player_darwin.m`: libmpv handle, event loop, and the OpenGL view beneath the webview; `player_other.go` is the non-macOS stub
 - `frontend/src/nativePlayer.js`: libmpv adapter exposing the `HTMLVideoElement` subset `App.vue` uses
@@ -29,7 +32,8 @@
 - `frontend/scripts/check-i18n.mjs`: embedded JSON key-parity, usage, and non-empty-value validation
 - `frontend/src/styles.css`: visual styling, notifications, and language selector
 - `main_test.go`: backend, localization, FFmpeg errors, and media integration tests
-- `Taskfile.yml`, `build/`: Wails build/package tasks (tracked; macOS packaging runs `bundle_media.py`)
+- `Taskfile.yml`, `build/`: Wails build/package tasks (tracked; macOS packaging runs `bundle_media.py`; `wails3 task install` installs into /Applications)
+- `build/config.yml`: app metadata and `fileAssociations`; `wails3 task common:update:build-assets` regenerates `Info.plist`, the NSIS associations, and the Linux desktop file from it
 
 ## Fast routing
 

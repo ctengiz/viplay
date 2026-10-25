@@ -130,6 +130,8 @@ export class MediaItem {
     "url": string;
     "thumbnailUrl": string;
     "kind": string;
+    "size": number;
+    "modTime": number;
 
     /** Creates a new MediaItem instance. */
     constructor($$source: Partial<MediaItem> = {}) {
@@ -147,6 +149,12 @@ export class MediaItem {
         }
         if (!("kind" in $$source)) {
             this["kind"] = "";
+        }
+        if (!("size" in $$source)) {
+            this["size"] = 0;
+        }
+        if (!("modTime" in $$source)) {
+            this["modTime"] = 0;
         }
 
         Object.assign(this, $$source);
