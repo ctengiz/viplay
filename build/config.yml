@@ -47,6 +47,7 @@ dev_mode:
 # More information at: https://v3.wails.io/noit/done/yet
 fileAssociations:
   # Registers ViPlay as a viewer so Finder lists it under Open With; keep in sync with isSupportedMedia.
+  # iconName resolves to build/darwin/icons.icns and build/windows/icons.ico (a copy of icon.ico for the NSIS installer).
   - ext: mp4
     name: MPEG-4 video
     description: MPEG-4 video
