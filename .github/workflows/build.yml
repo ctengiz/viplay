@@ -37,7 +37,9 @@ jobs:
         run: brew install mpv ffmpeg
       - name: Windows dependencies
         if: runner.os == 'Windows'
-        run: choco install nsis -y --no-progress
+        run: |
+          choco install nsis -y --no-progress
+          "${env:ProgramFiles(x86)}\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - run: npm ci
         working-directory: frontend
       # A clean checkout has no ignored frontend/dist directory. Build it before

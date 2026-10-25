@@ -16,7 +16,10 @@ import tarfile
 
 
 def run(*args):
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(f"{' '.join(args[:3])} failed ({result.returncode}):\n{result.stderr.strip()}")
+    return result.stdout
 
 
 # Formulae installed from Homebrew's JSON API omit resources and patches, so the Ruby source is loaded instead.
