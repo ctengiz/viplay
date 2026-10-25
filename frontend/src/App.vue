@@ -468,6 +468,7 @@ function fileType(name) { return name.split('.').pop().toUpperCase() }
 function fileSize(value) {
   if (!value) return '—'
   const megabytes = value / 1024 / 1024
+  if (megabytes < 1) return `${Math.max(1, Math.round(value / 1024))} KB`
   return megabytes >= 1024 ? `${(megabytes / 1024).toFixed(2)} GB` : `${megabytes.toFixed(1)} MB`
 }
 

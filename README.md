@@ -2,6 +2,8 @@
 
 ViPlay is a cross-platform desktop video player built with Go, Wails v3, and Vue 3 for macOS, Linux, and Windows.
 
+![ViPlay playing a video with the playlist open](docs/screenshot.png)
+
 ## Requirements
 
 - Go 1.26+
