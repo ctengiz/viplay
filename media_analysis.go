@@ -142,15 +142,7 @@ func thumbnailFor(path string) ([]byte, error) {
 }
 
 func decodeH264Thumbnail(path string) ([]byte, error) {
-	info, err := probeMediaPureGo(path)
-	if err != nil {
-		return nil, err
-	}
-	timestamp := info.Duration * .1
-	if timestamp < .1 {
-		timestamp = .1
-	}
-	frame, err := decodeH264FrameAt(path, timestamp)
+	frame, err := decodeH264FrameAt(path, .1)
 	if err != nil {
 		return nil, err
 	}

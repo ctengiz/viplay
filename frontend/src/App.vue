@@ -2,10 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertCircle, Captions, CheckCircle2, ChevronDown, ChevronRight, Copy, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Clipboard, Events, Window } from '@wailsio/runtime'
-import { CancelTranscode, ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, OpenDroppedFiles, OpenSubtitle, OpenSubtitlePath, OpenVideos, PauseThumbnailGeneration, PreparePlayback, PreparePlaybackForce, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeStatus, TranscodeVideo } from '../bindings/viplay/app'
+import { CancelTranscode, ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, OpenDroppedFiles, OpenSubtitle, OpenSubtitlePath, OpenVideos, PauseThumbnailGeneration, PlayerEngine, PreparePlayback, PreparePlaybackForce, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeStatus, TranscodeVideo } from '../bindings/viplay/app'
 import { loadLocale, locale, locales, t } from './i18n'
+import { createNativePlayer } from './nativePlayer'
 
 const video = ref(null)
+const stage = ref(null)
+const queuePanel = ref(null)
+const nativeEngine = ref(false)
+let stageObserver = null
 const queue = ref([])
 const index = ref(0)
 const playing = ref(false)
@@ -675,13 +680,29 @@ watch(item, async value => {
   playbackPreparing.value = !!value
   current.value = 0
   duration.value = 0
-  mediaInfo.value = value ? await ProbeMedia(value.path) : null
-  if (!value) { playbackPreparing.value = false; return }
-  if (run !== playbackRun) return
+  if (!value) { mediaInfo.value = null; playbackPreparing.value = false; if (nativeEngine.value) video.value.stop(); return }
+  if (nativeEngine.value) {
+    // libmpv opens every supported container directly, so no playback proxy is prepared.
+    playbackPreparing.value = false
+    video.value.load(value.path, shouldAutoplay).catch(error => { if (run === playbackRun) notify('error', t('playback.errorTitle'), String(error)) })
+    try {
+      const info = await ProbeMedia(value.path)
+      if (run === playbackRun) mediaInfo.value = info
+    } catch { if (run === playbackRun) mediaInfo.value = null }
+    return
+  }
   const legacyFormat = /\.(mpg|mpeg|flv|avi|wmv|asf|mkv)$/i.test(value.path)
   if (legacyFormat) notify('progress', t('playback.preparingTitle'), t('playback.preparing', { name: value.name }))
+  // Probing and proxy preparation are independent, so neither waits for the other.
+  const playbackRequest = PreparePlayback(value.path)
+  playbackRequest.catch(() => {})
   try {
-    const url = await PreparePlayback(value.path)
+    const info = await ProbeMedia(value.path)
+    if (run === playbackRun) mediaInfo.value = info
+  } catch { if (run === playbackRun) mediaInfo.value = null }
+  if (run !== playbackRun) return
+  try {
+    const url = await playbackRequest
     if (run !== playbackRun) return
     playbackURL.value = url
     playbackPreparing.value = false
@@ -726,7 +747,47 @@ function onWailsFilesDropped(event) {
   if (files.length) handleDroppedFiles(files)
 }
 
+function updateVideoArea() {
+  const rect = stage.value?.getBoundingClientRect()
+  if (!rect || !nativeEngine.value) return
+  const width = window.innerWidth
+  const height = window.innerHeight
+  // The playlist overlays the stage, so the picture is kept to the uncovered part.
+  const queueLeft = queuePanel.value?.getBoundingClientRect().left ?? width
+  const right = Math.min(rect.right, queueLeft)
+  video.value.setVideoArea(rect.left / width, rect.top / height, (width - right) / width, (height - rect.bottom) / height)
+}
+watch(showQueue, () => nextTick(updateVideoArea))
+
+async function initNativeEngine() {
+  try {
+    if (await PlayerEngine() !== 'mpv') return
+  } catch { return }
+  video.value = createNativePlayer({
+    play: markPlayed,
+    pause: () => { playing.value = false },
+    timeupdate: onTimeUpdate,
+    loadedmetadata: loaded,
+    ended: next,
+    error: message => notify('error', t('playback.errorTitle'), message),
+  })
+  video.value.volume = volume.value
+  video.value.playbackRate = speed.value
+  video.value.setMuted(muted.value)
+  nativeEngine.value = true
+  document.documentElement.classList.add('native-engine')
+  stageObserver = new ResizeObserver(updateVideoArea)
+  stageObserver.observe(stage.value)
+  window.addEventListener('resize', updateVideoArea)
+  updateVideoArea()
+  if (item.value) video.value.load(item.value.path, autoplayOnReady).catch(() => {})
+}
+
+watch(muted, value => { if (nativeEngine.value) video.value.setMuted(value) })
+watch(subtitle, value => { if (nativeEngine.value) video.value.setSubtitle(value?.path) })
+
 onMounted(() => {
+  initNativeEngine()
   window.addEventListener('keydown', onKey)
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('dragenter', onWindowDragOver)
@@ -736,6 +797,8 @@ onMounted(() => {
   Events.On('files-dropped', onWailsFilesDropped)
 })
 onBeforeUnmount(() => {
+  stageObserver?.disconnect()
+  window.removeEventListener('resize', updateVideoArea)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('dragenter', onWindowDragOver)
@@ -797,8 +860,9 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <div class="stage" @dblclick="fullscreen">
-        <video v-if="item" :key="playbackURL" ref="video" :src="playbackURL || undefined" :muted="muted" @click="toggle" @play="markPlayed" @pause="playing = false" @timeupdate="onTimeUpdate" @loadedmetadata="loaded" @ended="next" @error="onVideoError">
+      <div ref="stage" class="stage" :class="{ 'has-media': !!item }" @dblclick="fullscreen">
+        <div v-if="item && nativeEngine" class="native-surface" @click="toggle" />
+        <video v-else-if="item" :key="playbackURL" ref="video" :src="playbackURL || undefined" :muted="muted" @click="toggle" @play="markPlayed" @pause="playing = false" @timeupdate="onTimeUpdate" @loadedmetadata="loaded" @ended="next" @error="onVideoError">
           <track v-if="subtitle" default kind="subtitles" :src="subtitle.url" srcLang="tr" :label="subtitle.name">
         </video>
         <div v-if="item && playbackPreparing" class="playback-preparing"><LoaderCircle class="spin" :size="30" /><span>{{ t('playback.preparingTitle') }}</span></div>
@@ -836,7 +900,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <aside v-if="showQueue" class="queue">
+    <aside v-if="showQueue" ref="queuePanel" class="queue">
       <div class="queue-head"><div><span>{{ t('queue.playlist') }}</span><strong>{{ t('queue.upNext') }}</strong></div><button class="icon-btn" :aria-label="t('queue.close')" @click="showQueue = false"><X :size="20" /></button></div>
       <div v-if="queue.some(entry => entry.kind === 'video')" class="thumbnail-progress">
         <div class="thumbnail-progress-head"><span><strong>{{ t('thumbnails.title') }}</strong><small v-if="thumbnailProgress.active">{{ thumbnailProgress.paused ? t('thumbnails.paused') : t('thumbnails.generating', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><small v-else-if="thumbnailProgress.total">{{ t('thumbnails.complete', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><small v-else>{{ t('thumbnails.cacheEmpty') }}</small></span><div>

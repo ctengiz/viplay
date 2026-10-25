@@ -64,6 +64,8 @@ type App struct {
 	recent      *recentStore
 	thumbnails  *thumbnailManager
 	transcode   *transcodeManager
+	player      *nativePlayer
+	window      *application.WebviewWindow
 	locale      localeState
 }
 
@@ -194,7 +196,14 @@ func (a *App) ProbeMedia(path string) (MediaInfo, error) {
 	if !a.server.isAllowed(path) {
 		return MediaInfo{}, errors.New(a.tr("error.unauthorised"))
 	}
-	return probeMediaPureGo(path)
+	info, err := probeMediaPureGo(path)
+	if err != nil || info.ProbeAvailable {
+		return info, err
+	}
+	if probe, probeErr := probeWithFFprobe(path, a.locale.get()); probeErr == nil {
+		info = mediaInfoFromProbe(info, probe)
+	}
+	return info, nil
 }
 
 func (a *App) PreparePlayback(path string) (string, error) {

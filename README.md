@@ -4,17 +4,18 @@ ViPlay is a cross-platform desktop video player built with Go, Wails v3, and Vue
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.26+
 - Node.js 20+
 - Wails platform dependencies: https://wails.io/docs/gettingstarted/installation
-- System-installed `ffmpeg` and `ffprobe` for legacy MPG/FLV playback, video splitting, contact sheets, and re-encoding
+- macOS builds: Homebrew `mpv` and `ffmpeg` (`brew install mpv ffmpeg`); packaging bundles them into `ViPlay.app`
+- Windows and Linux: system-installed `ffmpeg` and `ffprobe` for legacy-format playback, video splitting, contact sheets, and re-encoding
 
-FFmpeg is not bundled with the application. Install it with `brew install ffmpeg` on macOS, `winget install Gyan.FFmpeg` on Windows, or the distribution package manager on Linux. Restart ViPlay after installation.
+Packaged macOS builds are self-contained: libmpv plays every format directly, and the bundled FFmpeg handles splitting, contact sheets, and re-encoding. On Windows and Linux, install FFmpeg with `winget install Gyan.FFmpeg` or the distribution package manager and restart ViPlay.
 
 ## Development
 
 ```bash
-go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.8
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.34
 cd frontend && npm install && cd ..
 wails3 dev
 ```
@@ -43,7 +44,8 @@ Every user-facing feature must include matching English and Turkish translation 
 
 - Multi-file local playback queue
 - Play/pause, seeking, previous/next navigation, playback speed, volume, and fullscreen
-- MPG, MPEG, and FLV playback through cached FFmpeg-generated compatibility proxies
+- macOS playback through libmpv with hardware decoding, opening MKV, AVI, WMV, FLV, MPG, HEVC, and AC3/DTS audio directly
+- Windows and Linux playback of MPG, MPEG, FLV, AVI, WMV, and MKV through cached FFmpeg-generated compatibility proxies
 - WebVTT subtitle loading
 - Keyboard shortcuts: `Space`, `←`, `→`, `F`, `M`, `⌘←` / `⌘→` for folder navigation, and `Del` / `⌘⌫` for disk deletion
 - Lossless FFmpeg stream-copy splitting at keyframes
@@ -52,4 +54,8 @@ Every user-facing feature must include matching English and Turkish translation 
 - Authorized local media streaming with HTTP range requests
 - Persistent English and Turkish UI
 
-Codec playback support depends on the operating system WebView media engine. H.264/AAC in MP4 provides the broadest common compatibility.
+On Windows and Linux, codec playback support depends on the operating system WebView media engine. H.264/AAC in MP4 provides the broadest common compatibility.
+
+## License
+
+ViPlay is free software licensed under the GNU General Public License v3.0 or later (`GPL-3.0-or-later`); see `LICENSE`. Bundled and compiled-in third-party components, their licenses, and how to obtain their corresponding source are listed in `THIRD_PARTY_NOTICES.md`.

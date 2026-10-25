@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   desktop:
     strategy:
@@ -20,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
-        with: { go-version: '1.25' }
+        with: { go-version: '1.26' }
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
@@ -29,6 +32,9 @@ jobs:
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install mpv ffmpeg
       - name: Windows dependencies
         if: runner.os == 'Windows'
         run: choco install nsis -y --no-progress
@@ -38,9 +44,27 @@ jobs:
       # Wails loads the Go package for binding generation and evaluates go:embed.
       - run: npm run build
         working-directory: frontend
-      - run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.8
+      - run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.34
       - run: wails3 task package
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: bin/**
+      # GPL compliance: publish the corresponding source of every bundled component with the binaries.
+      - name: macOS bundled component sources
+        if: runner.os == 'macOS'
+        run: |
+          python3 build/darwin/fetch_sources.py bin/ViPlay.app dist/sources
+          ditto -c -k --keepParent bin/ViPlay.app dist/ViPlay-macOS.zip
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: ViPlay-macOS-bundled-sources
+          path: dist/sources/**
+      - name: Publish macOS release
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/ViPlay-macOS.zip dist/sources/* --clobber

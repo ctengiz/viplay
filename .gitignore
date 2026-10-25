@@ -31,7 +31,6 @@ frontend/dist
 
 # Build artifacts
 bin/
-build/
 .task/
 
 # IDE/Tooling

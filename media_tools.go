@@ -21,6 +21,12 @@ import (
 )
 
 func requireMediaTool(name, locale string) (string, error) {
+	// Packaged builds ship FFmpeg next to the application executable.
+	if executable, err := os.Executable(); err == nil {
+		if bundled, err := exec.LookPath(filepath.Join(filepath.Dir(executable), name)); err == nil {
+			return bundled, nil
+		}
+	}
 	path, err := exec.LookPath(name)
 	if err == nil {
 		return path, nil
@@ -192,9 +198,12 @@ type ffprobeResult struct {
 		Duration string `json:"duration"`
 	} `json:"format"`
 	Streams []struct {
-		CodecName string `json:"codec_name"`
-		CodecType string `json:"codec_type"`
-		PixFmt    string `json:"pix_fmt,omitempty"`
+		CodecName    string `json:"codec_name"`
+		CodecType    string `json:"codec_type"`
+		PixFmt       string `json:"pix_fmt,omitempty"`
+		Width        int    `json:"width,omitempty"`
+		Height       int    `json:"height,omitempty"`
+		AvgFrameRate string `json:"avg_frame_rate,omitempty"`
 	} `json:"streams"`
 }
 
@@ -416,12 +425,28 @@ func profileByID(id string) transcodeProfile {
 	return transcodeProfile{}
 }
 
-func availableVideoEncoders(ffmpeg string) map[string]bool {
-	output, err := exec.Command(ffmpeg, "-hide_banner", "-encoders").CombinedOutput()
+var ffmpegListings sync.Map
+
+// ffmpegListing caches capability listings because they cannot change while the binary path stays the same.
+func ffmpegListing(ffmpeg, flag string) (string, bool) {
+	key := ffmpeg + "\x00" + flag
+	if cached, ok := ffmpegListings.Load(key); ok {
+		return cached.(string), true
+	}
+	output, err := exec.Command(ffmpeg, "-hide_banner", flag).CombinedOutput()
 	if err != nil {
+		return "", false
+	}
+	ffmpegListings.Store(key, string(output))
+	return string(output), true
+}
+
+func availableVideoEncoders(ffmpeg string) map[string]bool {
+	output, ok := ffmpegListing(ffmpeg, "-encoders")
+	if !ok {
 		return nil
 	}
-	return parseVideoEncoders(string(output))
+	return parseVideoEncoders(output)
 }
 
 func parseVideoEncoders(output string) map[string]bool {
@@ -470,7 +495,7 @@ func probeWithFFprobe(path, locale string) (ffprobeResult, error) {
 	if err != nil {
 		return ffprobeResult{}, err
 	}
-	output, runErr := exec.Command(ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type,pix_fmt", "-of", "json", path).CombinedOutput()
+	output, runErr := exec.Command(ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type,pix_fmt,width,height,avg_frame_rate", "-of", "json", path).CombinedOutput()
 	if runErr != nil {
 		return ffprobeResult{}, mediaToolError(translate(locale, "error.durationFailed"), runErr, output)
 	}
@@ -479,6 +504,30 @@ func probeWithFFprobe(path, locale string) (ffprobeResult, error) {
 		return ffprobeResult{}, fmt.Errorf("%s: %w", translate(locale, "error.durationFailed"), err)
 	}
 	return result, nil
+}
+
+// mediaInfoFromProbe fills the fields the pure Go MP4 reader leaves empty for other containers.
+func mediaInfoFromProbe(info MediaInfo, probe ffprobeResult) MediaInfo {
+	info.ProbeAvailable = true
+	if duration, err := strconv.ParseFloat(probe.Format.Duration, 64); err == nil {
+		info.Duration = duration
+	}
+	for _, stream := range probe.Streams {
+		switch {
+		case stream.CodecType == "video" && info.VideoCodec == "":
+			info.VideoCodec, info.Width, info.Height = strings.ToLower(stream.CodecName), stream.Width, stream.Height
+			if numerator, denominator, ok := strings.Cut(stream.AvgFrameRate, "/"); ok {
+				n, nErr := strconv.ParseFloat(numerator, 64)
+				d, dErr := strconv.ParseFloat(denominator, 64)
+				if nErr == nil && dErr == nil && n > 0 && d > 0 {
+					info.FPS = fmt.Sprintf("%.3g", n/d)
+				}
+			}
+		case stream.CodecType == "audio" && info.AudioCodec == "":
+			info.AudioCodec = strings.ToLower(stream.CodecName)
+		}
+	}
+	return info
 }
 
 func firstVideoCodec(result ffprobeResult) string {
@@ -588,11 +637,8 @@ func extractContactSheet(path string, count, cellW, columns int, locale string) 
 }
 
 func ffmpegSupportsFilter(ffmpeg, name string) bool {
-	output, err := exec.Command(ffmpeg, "-hide_banner", "-filters").CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return ffmpegFilterListed(string(output), name)
+	output, ok := ffmpegListing(ffmpeg, "-filters")
+	return ok && ffmpegFilterListed(output, name)
 }
 
 func ffmpegFilterListed(output, name string) bool {
@@ -632,7 +678,8 @@ func availableOutput(base, ext string) string {
 
 // decodeH264FrameAt is retained for the lightweight in-app thumbnail cache.
 // User-triggered split, contact-sheet, and transcoding operations use the system FFmpeg.
-func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
+// The frame is taken at fraction of the duration so the moov box is parsed only once.
+func decodeH264FrameAt(path string, fraction float64) (*goh264.Frame, error) {
 	f, parsed, err := decodeMP4(path)
 	if err != nil {
 		return nil, err
@@ -654,6 +701,10 @@ func decodeH264FrameAt(path string, seconds float64) (*goh264.Frame, error) {
 	stbl := track.Mdia.Minf.Stbl
 	if stbl.Stsd.AvcX == nil || stbl.Stsd.AvcX.AvcC == nil {
 		return nil, fmt.Errorf("%s", translate(defaultLocale, "error.previewRequiresH264"))
+	}
+	seconds := .1
+	if parsed.Moov.Mvhd != nil && parsed.Moov.Mvhd.Timescale > 0 {
+		seconds = max(seconds, float64(parsed.Moov.Mvhd.Duration)/float64(parsed.Moov.Mvhd.Timescale)*fraction)
 	}
 	target, err := stbl.Stts.GetSampleNrAtTime(uint64(seconds * float64(track.Mdia.Mdhd.Timescale)))
 	if err != nil {

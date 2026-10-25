@@ -73,6 +73,52 @@ export function PauseThumbnailGeneration(): $CancellablePromise<void> {
     return $Call.ByID(3891602989);
 }
 
+/**
+ * PlayerEngine reports "mpv" when the native engine is available and attaches its view; otherwise "html5".
+ */
+export function PlayerEngine(): $CancellablePromise<string> {
+    return $Call.ByID(2499407690);
+}
+
+export function PlayerLoad(path: string, play: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2567208100, path, play);
+}
+
+export function PlayerSeek(seconds: number): $CancellablePromise<void> {
+    return $Call.ByID(4060982656, seconds);
+}
+
+export function PlayerSetMuted(muted: boolean): $CancellablePromise<void> {
+    return $Call.ByID(309093535, muted);
+}
+
+export function PlayerSetPause(paused: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1957059562, paused);
+}
+
+export function PlayerSetSpeed(speed: number): $CancellablePromise<void> {
+    return $Call.ByID(753759683, speed);
+}
+
+export function PlayerSetSubtitle(path: string): $CancellablePromise<void> {
+    return $Call.ByID(341896300, path);
+}
+
+/**
+ * PlayerSetVideoArea confines the picture to the stage element; values are margin ratios of the window.
+ */
+export function PlayerSetVideoArea(left: number, top: number, right: number, bottom: number): $CancellablePromise<void> {
+    return $Call.ByID(1275583174, left, top, right, bottom);
+}
+
+export function PlayerSetVolume(volume: number): $CancellablePromise<void> {
+    return $Call.ByID(1754242602, volume);
+}
+
+export function PlayerStop(): $CancellablePromise<void> {
+    return $Call.ByID(822475984);
+}
+
 export function PreparePlayback(path: string): $CancellablePromise<string> {
     return $Call.ByID(1688424733, path);
 }

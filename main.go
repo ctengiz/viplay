@@ -121,6 +121,14 @@ func main() {
 		},
 	})
 	service.application = app
+	backdrop := application.MacBackdropNormal
+	if player, err := newNativePlayer(func(event PlayerEvent) { app.Event.Emit("player:event", event) }); err == nil {
+		service.player = player
+		// The webview must be transparent for the native video view beneath it to show through.
+		backdrop = application.MacBackdropTransparent
+	} else {
+		fmt.Println("ViPlay: native player unavailable, using HTML5 playback:", err)
+	}
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",
 		Title:            "ViPlay",
@@ -131,8 +139,9 @@ func main() {
 		URL:              "/",
 		BackgroundColour: application.NewRGB(9, 10, 12),
 		EnableFileDrop:   true,
-		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHidden},
+		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHidden, Backdrop: backdrop},
 	})
+	service.window = win
 	win.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
 		files := event.Context().DroppedFiles()
 		application.Get().Event.Emit("files-dropped", map[string]any{

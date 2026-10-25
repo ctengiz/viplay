@@ -7,11 +7,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
-var playbackProxyMu sync.Mutex
+// playbackCacheLimit bounds the proxy cache; least recently used proxies are evicted first.
+const playbackCacheLimit = 20 << 30
+
+var playbackProxyLocks sync.Map
 
 func requiresPlaybackProxy(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -22,22 +28,38 @@ func requiresPlaybackProxy(path string) bool {
 	}
 }
 
-func canStreamCopyVideo(path, locale string) bool {
-	probe, err := probeWithFFprobe(path, locale)
-	if err != nil {
-		return false
-	}
+// proxyStreamArgs returns codec arguments that remux WebKit-compatible streams and convert only the rest.
+func proxyStreamArgs(probe ffprobeResult) (video []string, audio []string) {
+	audio = []string{"-c:a", "copy"}
 	for _, stream := range probe.Streams {
-		if stream.CodecType == "video" {
-			codec := strings.ToLower(stream.CodecName)
-			pixFmt := strings.ToLower(stream.PixFmt)
-			if (codec == "h264" || codec == "hevc") && (pixFmt == "" || pixFmt == "yuv420p" || pixFmt == "yuvj420p") {
-				return true
-			}
-			return false
+		if stream.CodecType == "audio" && strings.ToLower(stream.CodecName) != "aac" {
+			audio = []string{"-c:a", "aac", "-b:a", "192k"}
 		}
 	}
-	return false
+	for _, stream := range probe.Streams {
+		if stream.CodecType != "video" {
+			continue
+		}
+		codec, pixFmt := strings.ToLower(stream.CodecName), strings.ToLower(stream.PixFmt)
+		eightBit := pixFmt == "" || pixFmt == "yuv420p" || pixFmt == "yuvj420p"
+		switch {
+		case codec == "h264" && eightBit:
+			return []string{"-c:v", "copy"}, audio
+		case codec == "hevc" && (eightBit || pixFmt == "yuv420p10le"):
+			// WebKit plays HEVC in MP4 only with the hvc1 sample entry tag.
+			return []string{"-c:v", "copy", "-tag:v", "hvc1"}, audio
+		}
+		return nil, audio
+	}
+	return nil, audio
+}
+
+func proxyEncoderArgs(ffmpeg string) [][]string {
+	software := []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"}
+	if runtime.GOOS == "darwin" && availableVideoEncoders(ffmpeg)["h264_videotoolbox"] {
+		return [][]string{{"-c:v", "h264_videotoolbox", "-b:v", "12M", "-allow_sw", "1", "-pix_fmt", "yuv420p"}, software}
+	}
+	return [][]string{software}
 }
 
 func preparePlaybackFile(path, locale string, force bool) (string, error) {
@@ -64,9 +86,12 @@ func preparePlaybackFileAt(path, locale, cacheRoot string) (string, error) {
 	cacheDir := filepath.Join(cacheRoot, "ViPlay", "playback")
 	outputPath := filepath.Join(cacheDir, hex.EncodeToString(hash[:])+".mp4")
 
-	playbackProxyMu.Lock()
-	defer playbackProxyMu.Unlock()
+	lock, _ := playbackProxyLocks.LoadOrStore(outputPath, &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	defer lock.(*sync.Mutex).Unlock()
 	if info, statErr := os.Stat(outputPath); statErr == nil && info.Size() > 0 {
+		now := time.Now()
+		_ = os.Chtimes(outputPath, now, now)
 		return outputPath, nil
 	}
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
@@ -80,45 +105,67 @@ func preparePlaybackFileAt(path, locale, cacheRoot string) (string, error) {
 	if err := temp.Close(); err != nil {
 		return "", err
 	}
-	_ = os.Remove(tempPath)
 	defer os.Remove(tempPath)
 
-	ext := strings.ToLower(filepath.Ext(path))
-	if (ext == ".mkv" || ext == ".avi" || ext == ".mp4" || ext == ".mov") && canStreamCopyVideo(path, locale) {
-		copyArgs := []string{
-			"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-			"-i", path,
-			"-map", "0:v:0", "-map", "0:a?", "-sn", "-dn",
-			"-c:v", "copy",
-			"-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-			tempPath,
+	var videoAttempts [][]string
+	audioArgs := []string{"-c:a", "aac", "-b:a", "192k"}
+	if probe, probeErr := probeWithFFprobe(path, locale); probeErr == nil {
+		var copyArgs []string
+		copyArgs, audioArgs = proxyStreamArgs(probe)
+		if copyArgs != nil {
+			videoAttempts = append(videoAttempts, copyArgs)
 		}
-		if _, copyErr := exec.Command(ffmpeg, copyArgs...).CombinedOutput(); copyErr == nil {
-			if info, statErr := os.Stat(tempPath); statErr == nil && info.Size() > 0 {
-				if err := os.Rename(tempPath, outputPath); err == nil {
-					return outputPath, nil
-				}
-			}
-		}
-		_ = os.Remove(tempPath)
 	}
+	videoAttempts = append(videoAttempts, proxyEncoderArgs(ffmpeg)...)
 
-	args := []string{
-		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-		"-i", path,
-		"-map", "0:v:0", "-map", "0:a?", "-sn", "-dn",
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-		"-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-		tempPath,
+	var lastErr error
+	var lastOutput []byte
+	for _, videoArgs := range videoAttempts {
+		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?", "-sn", "-dn"}
+		args = append(append(append(args, videoArgs...), audioArgs...), "-movflags", "+faststart", tempPath)
+		lastOutput, lastErr = exec.Command(ffmpeg, args...).CombinedOutput()
+		if info, statErr := os.Stat(tempPath); lastErr == nil && statErr == nil && info.Size() > 0 {
+			if err := os.Rename(tempPath, outputPath); err != nil {
+				return "", err
+			}
+			prunePlaybackCache(cacheDir, playbackCacheLimit, outputPath)
+			return outputPath, nil
+		}
 	}
-	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
-		return "", mediaToolError(translate(locale, "error.playbackConversionFailed"), runErr, output)
-	}
-	if info, statErr := os.Stat(tempPath); statErr != nil || info.Size() == 0 {
+	if lastErr == nil {
 		return "", fmt.Errorf("%s", translate(locale, "error.playbackConversionFailed"))
 	}
-	if err := os.Rename(tempPath, outputPath); err != nil {
-		return "", err
+	return "", mediaToolError(translate(locale, "error.playbackConversionFailed"), lastErr, lastOutput)
+}
+
+// prunePlaybackCache removes the least recently used proxies until the cache fits within limit.
+func prunePlaybackCache(cacheDir string, limit int64, keep string) {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return
 	}
-	return outputPath, nil
+	type cached struct {
+		path    string
+		size    int64
+		modTime time.Time
+	}
+	var files []cached
+	var total int64
+	for _, entry := range entries {
+		info, infoErr := entry.Info()
+		if infoErr != nil || entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		files = append(files, cached{filepath.Join(cacheDir, entry.Name()), info.Size(), info.ModTime()})
+		total += info.Size()
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
+	for _, file := range files {
+		if total <= limit {
+			return
+		}
+		if file.path != keep && os.Remove(file.path) == nil {
+			total -= file.size
+		}
+	}
 }

@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "ViPlay",
+			"FileDescription": "Çok platformlu masaüstü video oynatıcı",
+			"LegalCopyright": "(c) 2026 ViPlay",
+			"ProductName": "ViPlay",
+			"Comments": "Built with Go and Wails v3"
+		}
+	}
+}

@@ -23,7 +23,9 @@ This file applies to the entire repository. Keep it concise and store details in
 
 ## Stable product decisions
 
-- FFmpeg/ffprobe are system dependencies and are not bundled with the application.
+- macOS packages bundle FFmpeg, ffprobe, and libmpv (`build/darwin/bundle_media.py`); Windows and Linux use system FFmpeg/ffprobe.
+- macOS playback uses libmpv beneath a transparent webview; Windows and Linux use HTML5 video with FFmpeg playback proxies.
+- ViPlay is GPL-3.0-or-later; keep `THIRD_PARTY_NOTICES.md` current when dependencies change.
 - Video splitting uses FFmpeg stream-copy at the nearest keyframe.
 - Contact sheets use FFmpeg; if `drawtext` is unavailable, timestamps are omitted without failing the operation.
 - Long user-facing errors wrap, scroll, and remain readable.

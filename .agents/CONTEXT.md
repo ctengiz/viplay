@@ -2,10 +2,10 @@
 
 ## Stack
 
-- Go 1.25 and Wails v3 beta.8
+- Go 1.26 and Wails v3 beta.34
 - Vue 3, Vite, and Lucide
 - Desktop targets: macOS, Windows, and Linux
-- External runtime tools: `ffmpeg` and `ffprobe`
+- Media runtime: libmpv, `ffmpeg`, and `ffprobe` (bundled into macOS packages from Homebrew; system FFmpeg on Windows/Linux)
 - Built-in locales: English (`en`, default/fallback) and Turkish (`tr`)
 
 ## File map
@@ -17,13 +17,19 @@
 - `media_analysis.go`: MP4 analysis, thumbnails, and recent-store logic
 - `thumbnail_jobs.go`: sequential thumbnail generation state, pause/stop controls, and cache cleanup
 - `media_tools.go`: FFmpeg split/contact-sheet/transcode logic and H.264 thumbnail decoder
-- `playback.go`: cached FFmpeg playback proxies for legacy MPG/MPEG and FLV containers
+- `player.go`: engine-neutral player bindings and authorization checks
+- `player_darwin.go`, `player_darwin.m`: libmpv handle, event loop, and the OpenGL view beneath the webview; `player_other.go` is the non-macOS stub
+- `frontend/src/nativePlayer.js`: libmpv adapter exposing the `HTMLVideoElement` subset `App.vue` uses
+- `build/darwin/bundle_media.py`: bundles FFmpeg/libmpv dylibs, license files, and the minimum macOS version into `ViPlay.app`
+- `build/darwin/fetch_sources.py`: collects upstream archives, resources, patches, and formulae of bundled components for release uploads
+- `THIRD_PARTY_NOTICES.md`: third-party licenses and corresponding-source policy
+- `playback.go`: cached, size-bounded FFmpeg playback proxies (remux first, hardware encode fallback) for MPG/MPEG, FLV, AVI, WMV/ASF, and MKV
 - `frontend/src/App.vue`: application state, user flows, and template
 - `frontend/src/i18n.js`: dynamic backend catalog loading, interpolation, and preference persistence
 - `frontend/scripts/check-i18n.mjs`: embedded JSON key-parity, usage, and non-empty-value validation
 - `frontend/src/styles.css`: visual styling, notifications, and language selector
 - `main_test.go`: backend, localization, FFmpeg errors, and media integration tests
-- `Taskfile.yml`, `build/`: Wails build/package tasks
+- `Taskfile.yml`, `build/`: Wails build/package tasks (tracked; macOS packaging runs `bundle_media.py`)
 
 ## Fast routing
 
@@ -44,6 +50,7 @@
 - Re-encoding recommends available HEVC/AV1 software encoders, writes Matroska, validates codec/duration/size, then removes the source.
 - Playlist thumbnails are generated sequentially with progress, cooperative pause/stop controls, and user-triggered cache cleanup.
 - FFmpeg filters are detected at runtime; `drawtext`, which may be absent in Homebrew FFmpeg, is optional.
+- On macOS, libmpv plays files directly without proxies and reports state through the `player:event` Wails event.
 - Missing FFmpeg errors contain platform-specific installation commands in the active language.
 - Error notifications remain for 15 seconds; details wrap, scroll, and can be selected.
 

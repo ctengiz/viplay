@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -640,5 +641,121 @@ func TestRecentStorePersistsNewestFirstAndDeduplicates(t *testing.T) {
 	}
 	if len(paths) != 2 || paths[0] != first || paths[1] != second {
 		t.Fatalf("unexpected recent order: %#v", paths)
+	}
+}
+
+func TestProxyStreamArgs(t *testing.T) {
+	tests := []struct {
+		probe string
+		video string
+		audio string
+	}{
+		{`{"streams":[{"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p"},{"codec_type":"audio","codec_name":"aac"}]}`, "-c:v copy", "-c:a copy"},
+		{`{"streams":[{"codec_type":"video","codec_name":"hevc","pix_fmt":"yuv420p10le"},{"codec_type":"audio","codec_name":"ac3"}]}`, "-c:v copy -tag:v hvc1", "-c:a aac -b:a 192k"},
+		{`{"streams":[{"codec_type":"video","codec_name":"h264","pix_fmt":"yuv422p"}]}`, "", "-c:a copy"},
+		{`{"streams":[{"codec_type":"video","codec_name":"mpeg2video","pix_fmt":"yuv420p"},{"codec_type":"audio","codec_name":"aac"},{"codec_type":"audio","codec_name":"mp2"}]}`, "", "-c:a aac -b:a 192k"},
+	}
+	for _, test := range tests {
+		var probe ffprobeResult
+		if err := json.Unmarshal([]byte(test.probe), &probe); err != nil {
+			t.Fatal(err)
+		}
+		video, audio := proxyStreamArgs(probe)
+		if strings.Join(video, " ") != test.video || strings.Join(audio, " ") != test.audio {
+			t.Errorf("%s: got video %q audio %q", test.probe, video, audio)
+		}
+	}
+}
+
+func TestPrunePlaybackCacheEvictsLeastRecentlyUsed(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	for i, name := range []string{"old.mp4", "mid.mp4", "new.mp4"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, make([]byte, 10), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stamp := now.Add(time.Duration(i) * time.Minute)
+		_ = os.Chtimes(path, stamp, stamp)
+	}
+	prunePlaybackCache(dir, 20, filepath.Join(dir, "old.mp4"))
+	for name, want := range map[string]bool{"old.mp4": true, "mid.mp4": false, "new.mp4": true} {
+		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
+			t.Errorf("%s exists=%v, want %v", name, err == nil, want)
+		}
+	}
+}
+
+func TestPrepareHEVCPlaybackRemuxesWithHvc1Tag(t *testing.T) {
+	ffmpeg, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	ffprobe, err := requireMediaTool("ffprobe", "en")
+	if err != nil {
+		t.Skip(err)
+	}
+	if !availableVideoEncoders(ffmpeg)["libx265"] {
+		t.Skip("libx265 is not available")
+	}
+	root := t.TempDir()
+	input := filepath.Join(root, "source.mkv")
+	if output, runErr := exec.Command(ffmpeg,
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=1:size=160x90:rate=12",
+		"-f", "lavfi", "-i", "sine=duration=1",
+		"-c:v", "libx265", "-x265-params", "log-level=error", "-c:a", "aac", "-shortest", input,
+	).CombinedOutput(); runErr != nil {
+		t.Fatalf("create synthetic HEVC video: %v: %s", runErr, output)
+	}
+	playbackPath, err := preparePlaybackFileAt(input, "en", filepath.Join(root, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command(ffprobe, "-v", "error", "-show_entries", "stream=codec_name,codec_tag_string", "-of", "csv=p=0", playbackPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe proxy: %v: %s", err, output)
+	}
+	if got := strings.TrimSpace(string(output)); !strings.Contains(got, "hevc,hvc1") || !strings.Contains(got, "aac") {
+		t.Fatalf("proxy streams = %q, want remuxed hevc tagged hvc1 and aac", got)
+	}
+}
+
+func TestPlayerCommandsRequireAuthorisedMedia(t *testing.T) {
+	app := NewApp(newMediaServer())
+	if err := app.PlayerLoad("/not/authorised.mkv", true); err == nil {
+		t.Fatal("PlayerLoad accepted an unauthorised path")
+	}
+	if err := app.PlayerSetSubtitle("/not/authorised.vtt"); err == nil {
+		t.Fatal("PlayerSetSubtitle accepted an unauthorised path")
+	}
+	if app.PlayerEngine() != "html5" {
+		t.Fatal("PlayerEngine must fall back to html5 without a native player and window")
+	}
+}
+
+func TestRequireMediaToolPrefersBundledBinary(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Skip(err)
+	}
+	bundled := filepath.Join(filepath.Dir(executable), "viplay-test-tool")
+	if err := os.WriteFile(bundled, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Skip(err)
+	}
+	defer os.Remove(bundled)
+	if got, err := requireMediaTool("viplay-test-tool", "en"); err != nil || got != bundled {
+		t.Fatalf("requireMediaTool = %q, %v; want bundled %q", got, err, bundled)
+	}
+}
+
+func TestMediaInfoFromProbe(t *testing.T) {
+	var probe ffprobeResult
+	if err := json.Unmarshal([]byte(`{"format":{"duration":"12.5"},"streams":[{"codec_type":"video","codec_name":"HEVC","width":1920,"height":1080,"avg_frame_rate":"30000/1001"},{"codec_type":"audio","codec_name":"ac3"}]}`), &probe); err != nil {
+		t.Fatal(err)
+	}
+	info := mediaInfoFromProbe(MediaInfo{Container: "mkv", Size: 42}, probe)
+	if !info.ProbeAvailable || info.VideoCodec != "hevc" || info.AudioCodec != "ac3" || info.Width != 1920 || info.Height != 1080 || info.FPS != "30" || info.Duration != 12.5 || info.Container != "mkv" || info.Size != 42 {
+		t.Fatalf("unexpected media info: %+v", info)
 	}
 }
