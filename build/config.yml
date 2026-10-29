@@ -11,7 +11,7 @@ info:
   description: "Cross-platform desktop video player"
   copyright: "Copyright © 2026 Çağatay Tengiz. Licensed under GPL-3.0-or-later."
   comments: "Built with Go and Wails v3"
-  version: "0.2.0"
+  version: "0.3.0"
 
 # Dev mode configuration
 dev_mode:
