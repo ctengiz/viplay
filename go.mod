@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/Eyevinn/mp4ff v0.55.0
 	github.com/thesyncim/goh264 v0.0.0-20260714003229-dfe2249dbdb4
-	github.com/wailsapp/wails/v3 v3.0.0-beta.34
+	github.com/wailsapp/wails/v3 v3.0.0
 )
 
 require (

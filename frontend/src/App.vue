@@ -28,6 +28,8 @@ let wasPlayingBeforeSeek = false
 let scrubRaf = null
 const fullscreenActive = ref(false)
 const showQueue = ref(true)
+const cursorIdle = ref(false)
+let cursorTimer
 const subtitle = ref(null)
 const showShortcuts = ref(false)
 const showSheetDialog = ref(false)
@@ -105,6 +107,7 @@ async function openVideos() {
   queue.value = directory
   const selectedIndex = directory.findIndex(entry => entry.path === items[0].path)
   index.value = Math.max(0, selectedIndex)
+  autoplayOnReady = true
   libraryView.value = 'folder'
 }
 
@@ -445,8 +448,17 @@ function onTimeUpdate(event) {
 
 async function fullscreen() {
   await Window.ToggleFullscreen()
+  await syncFullscreen()
+}
+async function syncFullscreen() {
   fullscreenActive.value = await Window.IsFullscreen()
 }
+function wakeCursor() {
+  cursorIdle.value = false
+  window.clearTimeout(cursorTimer)
+  if (fullscreenActive.value) cursorTimer = window.setTimeout(() => { cursorIdle.value = true }, 2500)
+}
+watch(fullscreenActive, wakeCursor)
 async function select(i, autoplay = false) {
   if (seekResumeTimer) {
     window.clearTimeout(seekResumeTimer)
@@ -465,6 +477,18 @@ function next() { if (index.value < queue.value.length - 1) select(index.value +
 function previous() { current.value > 3 ? seekBy(-current.value) : index.value > 0 && select(index.value - 1, true) }
 function title(name) { return name.replace(/\.[^/.]+$/, '') }
 function fileType(name) { return name.split('.').pop().toUpperCase() }
+const mediaDetails = computed(() => {
+  const info = mediaInfo.value
+  if (!info) return []
+  return [
+    { label: t('mediaInfo.video'), value: info.videoCodec?.toUpperCase() },
+    { label: t('mediaInfo.audio'), value: info.audioCodec?.toUpperCase() },
+    { label: t('mediaInfo.dimensions'), value: info.width ? `${info.width}×${info.height}` : '' },
+    { label: t('mediaInfo.format'), value: info.container?.toUpperCase() },
+    { label: 'FPS', value: info.fps ? `${info.fps} FPS` : '' },
+    { label: t('mediaInfo.file'), value: info.size ? fileSize(info.size) : '' },
+  ].filter(detail => detail.value)
+})
 function fileSize(value) {
   if (!value) return '—'
   const megabytes = value / 1024 / 1024
@@ -768,6 +792,7 @@ function onKey(event) {
   if (event.key === 'Escape' && showSheetDialog.value) { showSheetDialog.value = false; return }
   if (event.key === 'Escape' && showShortcuts.value) { showShortcuts.value = false; return }
   if (showDeleteDialog.value || showTranscodeDialog.value || showShortcuts.value) return
+  if (event.key === 'Escape' && fullscreenActive.value) { fullscreen(); return }
   if (['INPUT', 'BUTTON'].includes(document.activeElement?.tagName) && event.code === 'Space') return
   if (document.activeElement?.tagName === 'INPUT' && document.activeElement.type !== 'range' && ['ArrowRight', 'ArrowLeft'].includes(event.code)) return
   const player = video.value
@@ -902,7 +927,7 @@ function updateVideoArea() {
   const right = Math.min(rect.right, queueLeft)
   video.value.setVideoArea(rect.left / width, rect.top / height, (width - right) / width, (height - rect.bottom) / height)
 }
-watch(showQueue, () => nextTick(updateVideoArea))
+watch([showQueue, fullscreenActive], () => nextTick(updateVideoArea))
 
 async function initNativeEngine() {
   try {
@@ -938,6 +963,9 @@ onMounted(() => {
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('dragenter', onWindowDragOver)
   window.addEventListener('dragover', onWindowDragOver)
+  // The OS can leave fullscreen without going through fullscreen(), e.g. the macOS window button.
+  window.addEventListener('resize', syncFullscreen)
+  window.addEventListener('mousemove', wakeCursor)
   window.addEventListener('dragleave', onWindowDragLeave)
   window.addEventListener('drop', onWindowDrop)
   Events.On('files-dropped', onWailsFilesDropped)
@@ -948,6 +976,9 @@ onBeforeUnmount(() => {
   queueObserver?.disconnect()
   window.clearTimeout(visibleTimer)
   window.removeEventListener('resize', updateVideoArea)
+  window.removeEventListener('resize', syncFullscreen)
+  window.removeEventListener('mousemove', wakeCursor)
+  window.clearTimeout(cursorTimer)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('dragenter', onWindowDragOver)
@@ -967,43 +998,28 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app" data-file-drop-target :class="{ 'queue-closed': !showQueue }">
+  <main class="app" data-file-drop-target :class="{ 'queue-closed': !showQueue || fullscreenActive, fullscreen: fullscreenActive, 'cursor-idle': fullscreenActive && cursorIdle }">
     <div v-if="fileDragOver" class="drop-overlay">
       <div class="drop-overlay-icon"><Film :size="36" /></div>
       <h2>{{ t('drop.title') }}</h2>
       <p>{{ t('drop.description') }}</p>
     </div>
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><Play :size="14" fill="currentColor" /></span>ViPlay</div>
-      <nav>
-        <span class="nav-title">{{ t('library.title') }}</span>
-        <button class="open-button" @click="openVideos"><FolderOpen :size="19" />{{ t('library.openVideo') }}</button>
-        <button class="nav-item" :class="{ selected: item && libraryView === 'folder' }" :disabled="!item" @click="loadFolder"><Film :size="18" />{{ t('library.folder') }}<span>{{ libraryView === 'folder' ? queue.length : '' }}</span></button>
-        <button class="nav-item" :class="{ selected: libraryView === 'recent' }" @click="loadRecent"><RotateCcw :size="18" />{{ t('library.recent') }}</button>
-      </nav>
-      <div v-if="item" class="media-sidebar">
-        <span>{{ t('mediaInfo.title') }}</span>
-        <dl>
-          <div><dt>{{ t('mediaInfo.video') }}</dt><dd>{{ mediaInfo?.videoCodec?.toUpperCase() || t('mediaInfo.unknown') }}</dd></div>
-          <div><dt>{{ t('mediaInfo.audio') }}</dt><dd>{{ mediaInfo?.audioCodec?.toUpperCase() || t('mediaInfo.unknown') }}</dd></div>
-          <div><dt>{{ t('mediaInfo.dimensions') }}</dt><dd>{{ mediaInfo?.width ? `${mediaInfo.width}×${mediaInfo.height}` : '—' }}</dd></div>
-          <div><dt>{{ t('mediaInfo.format') }}</dt><dd>{{ mediaInfo?.container?.toUpperCase() || '—' }}</dd></div>
-          <div><dt>FPS</dt><dd>{{ mediaInfo?.fps || '—' }}</dd></div>
-          <div><dt>{{ t('mediaInfo.file') }}</dt><dd>{{ fileSize(mediaInfo?.size) }}</dd></div>
-        </dl>
-      </div>
-      <button class="shortcut-trigger" @click="showShortcuts = true"><Keyboard :size="18" /><span>{{ t('shortcuts.open') }}</span></button>
-    </aside>
-
     <section class="player-shell">
       <header class="topbar">
-        <div><span v-if="item" class="topbar-file"><strong :title="item.path">{{ item.name }}</strong><button class="copy-path" :disabled="!item" :aria-label="t('pathCopy.action')" :title="t('pathCopy.action')" @click="copyFullPath"><Copy :size="14" /></button></span></div>
+        <div class="topbar-left">
+          <div v-if="item" class="topbar-meta">
+            <span class="topbar-file"><strong :title="item.path">{{ item.name }}</strong><button class="copy-path" :aria-label="t('pathCopy.action')" :title="t('pathCopy.action')" @click="copyFullPath"><Copy :size="14" /></button></span>
+            <small v-if="mediaDetails.length" class="media-details" :aria-label="t('mediaInfo.title')"><span v-for="detail in mediaDetails" :key="detail.label" :title="detail.label">{{ detail.value }}</span></small>
+          </div>
+        </div>
         <div class="topbar-actions">
+          <button class="icon-btn" :aria-label="t('library.openVideo')" :title="t('library.openVideo')" @click="openVideos"><FolderOpen :size="19" /></button>
           <label class="language-picker" :title="t('language.label')"><Languages :size="16" /><select :value="locale" :aria-label="t('language.label')" @change="changeLanguage"><option v-for="language in locales" :key="language.code" :value="language.code">{{ language.label }}</option></select><ChevronDown :size="12" /></label>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'split', marked: splitMarkers.length }" :aria-label="splitMarkers.length ? t('actions.multiSplit', { count: splitMarkers.length }) : t('actions.split')" :title="splitMarkers.length ? t('actions.multiSplitTitle', { count: splitMarkers.length }) : t('actions.splitTitle')" @click="splitAtMarkers"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /><span v-if="splitMarkers.length" class="marker-count">{{ splitMarkers.length }}</span></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" :aria-label="t('actions.contactSheet')" :title="t('actions.contactSheetTitle')" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'transcode' || processing === 'options', 'can-cancel': processing === 'transcode' }" :disabled="!item || item.kind !== 'video' || (!!processing && processing !== 'transcode')" :aria-label="processing === 'transcode' ? t('transcode.cancelAction') : t('actions.transcode')" :title="processing === 'transcode' ? t('transcode.cancelAction') : t('actions.transcodeTitle')" @click="processing === 'transcode' ? cancelTranscode() : requestTranscode()"><X v-if="processing === 'transcode'" :size="19" /><LoaderCircle v-else-if="processing === 'options'" class="spin" :size="20" /><RefreshCw v-else :size="19" /></button>
           <button class="icon-btn danger" :disabled="processing === 'delete'" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="requestDelete()"><Trash2 :size="19" /></button>
+          <button class="icon-btn" :aria-label="t('shortcuts.open')" :title="t('shortcuts.open')" @click="showShortcuts = true"><Keyboard :size="19" /></button>
           <button class="icon-btn" :class="{ active: showQueue }" :aria-label="t('actions.showQueue')" :title="t('actions.showQueue')" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
         </div>
       </header>
@@ -1052,7 +1068,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <aside v-if="showQueue" ref="queuePanel" class="queue">
+    <aside v-if="showQueue && !fullscreenActive" ref="queuePanel" class="queue">
       <div class="queue-head">
         <strong>{{ t('queue.playlist') }}<span v-if="queue.length">{{ queue.length }}</span></strong>
         <div>
@@ -1060,6 +1076,10 @@ onBeforeUnmount(() => {
           <button v-if="hasVideos" class="icon-btn small" :aria-label="t('thumbnails.clear')" :title="t('thumbnails.clear')" @click="clearThumbnails"><Trash2 :size="15" /></button>
           <button class="icon-btn" :aria-label="t('queue.close')" :title="t('queue.close')" @click="showQueue = false"><X :size="20" /></button>
         </div>
+      </div>
+      <div class="queue-tabs">
+        <button :class="{ selected: item && libraryView === 'folder' }" :disabled="!item" @click="loadFolder"><Film :size="15" />{{ t('library.folder') }}</button>
+        <button :class="{ selected: libraryView === 'recent' }" @click="loadRecent"><RotateCcw :size="15" />{{ t('library.recent') }}</button>
       </div>
       <div v-if="thumbnailProgress.active" class="thumbnail-progress">
         <div class="thumbnail-progress-head"><small>{{ thumbnailProgress.paused ? t('thumbnails.paused', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) : t('thumbnails.generating', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><div>
@@ -1122,7 +1142,7 @@ onBeforeUnmount(() => {
       <section>
         <header><div><strong>{{ t('delete.title') }}</strong></div><button class="icon-btn" :aria-label="t('common.close')" @click="closeDeleteDialog"><X :size="20" /></button></header>
         <p>{{ t('delete.confirm', { name: (deleteTarget ?? item)?.name }) }}</p>
-        <footer><button class="cancel" @click="closeDeleteDialog">{{ t('delete.cancel') }}</button><button class="confirm danger" autofocus @click="deleteCurrent"><Trash2 :size="17" />{{ t('delete.action') }}</button></footer>
+        <footer><button class="cancel" @click="closeDeleteDialog">{{ t('delete.cancel') }}</button><button class="confirm danger" autofocus @click="confirmDelete"><Trash2 :size="17" />{{ t('delete.action') }}</button></footer>
       </section>
     </div>
 

@@ -2,7 +2,7 @@
 
 ## Stack
 
-- Go 1.26 and Wails v3 beta.34
+- Go 1.26 and Wails v3.0.0
 - Vue 3, Vite, and Lucide
 - Desktop targets: macOS, Windows, and Linux
 - Media runtime: libmpv, `ffmpeg`, and `ffprobe` (bundled into macOS packages from Homebrew; system FFmpeg on Windows/Linux)

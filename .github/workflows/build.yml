@@ -46,7 +46,7 @@ jobs:
       # Wails loads the Go package for binding generation and evaluates go:embed.
       - run: npm run build
         working-directory: frontend
-      - run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.34
+      - run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - run: wails3 task package
       - uses: actions/upload-artifact@v4
         with:

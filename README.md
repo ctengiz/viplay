@@ -17,7 +17,7 @@ Packaged macOS builds are self-contained: libmpv plays every format directly, an
 ## Development
 
 ```bash
-go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.34
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 cd frontend && npm install && cd ..
 wails3 dev
 ```
