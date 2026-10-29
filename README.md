@@ -22,6 +22,28 @@ Built with Go, [Wails v3](https://v3.wails.io), and Vue 3 for macOS, Windows, an
 
 </div>
 
+## 💡 Why ViPlay?
+
+Most players stop at playback. ViPlay is built for **going through a folder of videos and deciding what to keep**, all without leaving the player:
+
+| | ViPlay | Typical player |
+| --- | :---: | :---: |
+| Opens MKV, AVI, WMV, FLV, HEVC, AC3/DTS without conversion | ✅ | ✅ |
+| The file's whole folder as a playlist with thumbnails, duration, and size | ✅ | ➖ |
+| Lossless split at keyframes, in any number of parts | ✅ | ❌ |
+| Contact sheet of evenly spaced frames | ✅ | ❌ |
+| Re-encode to HEVC/AV1, verify the result, and trash the original | ✅ | ❌ |
+| Delete the current video from disk with one key, even on network shares | ✅ | ❌ |
+| Jump to the next or previous folder with `⌘→` / `⌘←` | ✅ | ❌ |
+
+Watch → mark → split, preview, shrink, or delete → next video. That is the whole loop.
+
+<div align="center">
+
+![Placing split markers with B, seeking, and switching videos from the playlist](docs/demo.gif)
+
+</div>
+
 ## ✨ Features
 
 ### 🎬 Playback
