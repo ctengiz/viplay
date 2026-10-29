@@ -142,6 +142,7 @@ func main() {
 		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHidden, Backdrop: backdrop},
 	})
 	service.window = win
+	showTitleInFullscreen(win)
 	app.Event.OnApplicationEvent(events.Common.ApplicationOpenedWithFile, func(event *application.ApplicationEvent) {
 		service.openFromSystem(event.Context().Filename())
 	})

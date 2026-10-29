@@ -459,6 +459,7 @@ function wakeCursor() {
   if (fullscreenActive.value) cursorTimer = window.setTimeout(() => { cursorIdle.value = true }, 2500)
 }
 watch(fullscreenActive, wakeCursor)
+watch(() => item.value?.name, name => Window.SetTitle(name || 'ViPlay').catch(() => {}), { immediate: true })
 async function select(i, autoplay = false) {
   if (seekResumeTimer) {
     window.clearTimeout(seekResumeTimer)

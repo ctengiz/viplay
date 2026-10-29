@@ -22,6 +22,7 @@
 - `system_open.go`: queues files the OS asks ViPlay to open (Finder Open With) until the frontend is ready
 - `player.go`: engine-neutral player bindings and authorization checks
 - `player_darwin.go`, `player_darwin.m`: libmpv handle, event loop, and the OpenGL view beneath the webview; `player_other.go` is the non-macOS stub
+- `window_darwin.go`, `window_darwin.m`: shows the window title (the playing file) only in macOS fullscreen; `window_other.go` is the no-op stub
 - `frontend/src/nativePlayer.js`: libmpv adapter exposing the `HTMLVideoElement` subset `App.vue` uses
 - `build/darwin/bundle_media.py`: bundles FFmpeg/libmpv dylibs, license files, and the minimum macOS version into `ViPlay.app`
 - `build/darwin/fetch_sources.py`: collects upstream archives, resources, patches, and formulae of bundled components for release uploads
