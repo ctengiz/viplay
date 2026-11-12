@@ -316,7 +316,9 @@ export class TranscodeOption {
 export class TranscodeProgress {
     "active": boolean;
     "path": string;
+    "name": string;
     "codec": string;
+    "stage": string;
     "percent": number;
     "speed": string;
     "fps": number;
@@ -331,8 +333,14 @@ export class TranscodeProgress {
         if (!("path" in $$source)) {
             this["path"] = "";
         }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
         if (!("codec" in $$source)) {
             this["codec"] = "";
+        }
+        if (!("stage" in $$source)) {
+            this["stage"] = "";
         }
         if (!("percent" in $$source)) {
             this["percent"] = 0;

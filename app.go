@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+var mediaInfoCache sync.Map
 
 type MediaItem struct {
 	Name         string `json:"name"`
@@ -75,6 +78,11 @@ type App struct {
 func NewApp(server *mediaServer) *App {
 	app := &App{server: server, recent: newRecentStore(), thumbnails: newThumbnailManager(), transcode: newTranscodeManager()}
 	app.locale.set(defaultLocale)
+	app.transcode.setObserver(func(status TranscodeProgress) {
+		if app.application != nil {
+			app.application.Event.Emit("transcode:progress", status)
+		}
+	})
 	return app
 }
 
@@ -89,9 +97,16 @@ func (a *App) tr(key string, args ...any) string {
 }
 
 func (a *App) mediaItem(path string) MediaItem {
+	return a.mediaItemWithInfo(path, nil)
+}
+
+func (a *App) mediaItemWithInfo(path string, info os.FileInfo) MediaItem {
 	abs := a.server.allow(path)
 	item := MediaItem{Name: filepath.Base(abs), Path: abs, URL: "/media?path=" + url.QueryEscape(abs), ThumbnailURL: "/thumbnail?path=" + url.QueryEscape(abs), Kind: mediaKind(abs)}
-	if info, err := os.Stat(abs); err == nil {
+	if info == nil {
+		info, _ = os.Stat(abs)
+	}
+	if info != nil {
 		item.Size, item.ModTime = info.Size(), info.ModTime().UnixMilli()
 	}
 	return item
@@ -156,14 +171,15 @@ func (a *App) OpenDroppedFiles(paths []string) ([]MediaItem, error) {
 			if err == nil {
 				for _, entry := range entries {
 					if !entry.IsDir() && isSupportedMedia(entry.Name()) {
-						items = append(items, a.mediaItem(filepath.Join(trimmed, entry.Name())))
+						info, _ := entry.Info()
+						items = append(items, a.mediaItemWithInfo(filepath.Join(trimmed, entry.Name()), info))
 					}
 				}
 			}
 			continue
 		}
 		if isSupportedMedia(trimmed) {
-			items = append(items, a.mediaItem(trimmed))
+			items = append(items, a.mediaItemWithInfo(trimmed, fi))
 		}
 	}
 	return items, nil
@@ -173,7 +189,8 @@ func (a *App) DirectoryVideos(path string) ([]MediaItem, error) {
 	if !a.server.isAllowed(path) {
 		return nil, errors.New(a.tr("error.unauthorised"))
 	}
-	entries, err := os.ReadDir(filepath.Dir(path))
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +199,8 @@ func (a *App) DirectoryVideos(path string) ([]MediaItem, error) {
 		if entry.IsDir() || !isSupportedMedia(entry.Name()) {
 			continue
 		}
-		items = append(items, a.mediaItem(filepath.Join(filepath.Dir(path), entry.Name())))
+		info, _ := entry.Info()
+		items = append(items, a.mediaItemWithInfo(filepath.Join(dir, entry.Name()), info))
 	}
 	sort.Slice(items, func(i, j int) bool { return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name) })
 	return items, nil
@@ -191,6 +209,9 @@ func (a *App) DirectoryVideos(path string) ([]MediaItem, error) {
 func (a *App) DeleteVideo(path string) error {
 	if !a.server.isAllowed(path) {
 		return errors.New(a.tr("error.unauthorised"))
+	}
+	if a.transcode.isEncoding(path) {
+		return errors.New(a.tr("delete.encodingBusy"))
 	}
 	_ = removeThumbnailFor(path)
 	if err := deleteFile(path); err != nil {
@@ -205,12 +226,27 @@ func (a *App) ProbeMedia(path string) (MediaInfo, error) {
 	if !a.server.isAllowed(path) {
 		return MediaInfo{}, errors.New(a.tr("error.unauthorised"))
 	}
+	var cacheKey string
+	if stat, statErr := os.Stat(path); statErr == nil {
+		cacheKey = fmt.Sprintf("%s:%d:%d", path, stat.Size(), stat.ModTime().UnixNano())
+		if cached, ok := mediaInfoCache.Load(cacheKey); ok {
+			return cached.(MediaInfo), nil
+		}
+	}
 	info, err := probeMediaPureGo(path)
-	if err != nil || info.ProbeAvailable {
+	if err != nil {
 		return info, err
 	}
-	if probe, probeErr := probeWithFFprobe(path, a.locale.get()); probeErr == nil {
-		info = mediaInfoFromProbe(info, probe)
+	if !info.ProbeAvailable {
+		if probe, probeErr := probeWithFFprobe(path, a.locale.get()); probeErr == nil {
+			info = mediaInfoFromProbe(info, probe)
+		}
+	}
+	if cacheKey != "" && info.ProbeAvailable {
+		mediaInfoCache.Store(cacheKey, info)
+		if info.Duration > 0 {
+			durationCache.Store(cacheKey, info.Duration)
+		}
 	}
 	return info, nil
 }
@@ -342,6 +378,7 @@ func (a *App) TranscodeVideo(path string, optionID string, trashOriginal bool) (
 		return TranscodeResult{}, err
 	}
 	if trashOriginal {
+		_ = removeThumbnailFor(path)
 		a.server.disallow(path)
 		a.recent.replace(path, result.Item.Path)
 	} else {

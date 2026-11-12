@@ -808,3 +808,93 @@ func TestRevealInFolderRequiresAuthorisedMedia(t *testing.T) {
 		t.Fatal("RevealInFolder accepted an unauthorised path")
 	}
 }
+
+func TestDeleteVideoAllowsUnrelatedFileWhileEncoding(t *testing.T) {
+	root := t.TempDir()
+	encodingPath := filepath.Join(root, "encoding.mp4")
+	unrelatedPath := filepath.Join(root, "other.mp4")
+	for _, p := range []string{encodingPath, unrelatedPath} {
+		if err := os.WriteFile(p, []byte("video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := newMediaServer()
+	server.allow(encodingPath)
+	server.allow(unrelatedPath)
+	app := NewApp(server)
+	app.transcode.start(encodingPath, "HEVC (H.265)", 12, func() {})
+	defer app.transcode.finish()
+
+	if err := app.DeleteVideo(encodingPath); err == nil || err.Error() != app.tr("delete.encodingBusy") {
+		t.Fatalf("DeleteVideo(encodingPath) = %v, want %q", err, app.tr("delete.encodingBusy"))
+	}
+	if _, err := os.Stat(encodingPath); err != nil {
+		t.Fatalf("actively encoding file was removed: %v", err)
+	}
+
+	if err := app.DeleteVideo(unrelatedPath); err != nil {
+		t.Fatalf("DeleteVideo(unrelatedPath) failed while another file was encoding: %v", err)
+	}
+	if _, err := os.Stat(unrelatedPath); !os.IsNotExist(err) {
+		t.Fatal("unrelated file still exists after DeleteVideo")
+	}
+	if !app.transcode.progress().Active {
+		t.Fatal("background transcode stopped after deleting an unrelated file")
+	}
+}
+
+func TestTranscodeManagerObserverAndStages(t *testing.T) {
+	manager := newTranscodeManager()
+	var events []TranscodeProgress
+	manager.setObserver(func(status TranscodeProgress) {
+		events = append(events, status)
+	})
+	src := filepath.Join(t.TempDir(), "sample.mkv")
+	manager.start(src, "HEVC (H.265)", 0, func() {})
+	if !manager.isEncoding(src) || manager.isEncoding(filepath.Join(t.TempDir(), "other.mkv")) {
+		t.Fatal("isEncoding did not match only the active source file")
+	}
+	manager.setMeta("HEVC (H.265)", 20)
+	manager.update(5, 48, "2.0x")
+	manager.setStage("validating")
+	manager.finish()
+
+	if len(events) != 5 {
+		t.Fatalf("observer received %d events, want 5", len(events))
+	}
+	if events[0].Stage != "preparing" || events[0].Name != "sample.mkv" || !events[0].Active {
+		t.Fatalf("unexpected start snapshot: %+v", events[0])
+	}
+	if events[2].Stage != "encoding" || events[2].Percent != 25 || events[2].Speed != "2.0x" {
+		t.Fatalf("unexpected encoding snapshot: %+v", events[2])
+	}
+	if events[3].Stage != "validating" || events[3].Percent != 100 || events[3].CurrentTime != 20 {
+		t.Fatalf("unexpected validating snapshot: %+v", events[3])
+	}
+	if events[4].Active {
+		t.Fatalf("expected final snapshot to be inactive: %+v", events[4])
+	}
+}
+
+func TestProbeDurationAndFFmpegTimestampFallback(t *testing.T) {
+	if sec, ok := parseFFmpegTimestamp("00:01:32.500000000"); !ok || sec != 92.5 {
+		t.Fatalf("parseFFmpegTimestamp = %v, %v; want 92.5, true", sec, ok)
+	}
+	if _, ok := parseFFmpegTimestamp("N/A"); ok {
+		t.Fatal("parseFFmpegTimestamp accepted N/A")
+	}
+	var streamProbe ffprobeResult
+	if err := json.Unmarshal([]byte(`{"format":{"duration":"N/A"},"streams":[{"codec_type":"video","duration":"14.25"}]}`), &streamProbe); err != nil {
+		t.Fatal(err)
+	}
+	if got := probeDuration(streamProbe); got != 14.25 {
+		t.Fatalf("probeDuration(stream) = %v, want 14.25", got)
+	}
+	var tagProbe ffprobeResult
+	if err := json.Unmarshal([]byte(`{"format":{},"streams":[{"codec_type":"video","tags":{"DURATION":"00:02:03.500000000"}}]}`), &tagProbe); err != nil {
+		t.Fatal(err)
+	}
+	if got := probeDuration(tagProbe); got != 123.5 {
+		t.Fatalf("probeDuration(tag) = %v, want 123.5", got)
+	}
+}

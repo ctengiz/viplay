@@ -24,6 +24,12 @@ tasks:
     cmds:
       - task: "{{OS}}:package"
 
+  app:
+    summary: Packages a production macOS .app bundle (bin/ViPlay.app)
+    platforms: [darwin]
+    cmds:
+      - task: package
+
   install:
     summary: Installs the packaged application (macOS)
     platforms: [darwin]

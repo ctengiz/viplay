@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"sync"
 )
 
@@ -23,7 +22,7 @@ func mediaDurationCached(path, locale string) (float64, bool) {
 	if probe, err := probeMediaPureGo(path); err == nil && probe.Duration > 0 {
 		duration = probe.Duration
 	} else if result, err := probeWithFFprobe(path, locale); err == nil {
-		duration, _ = strconv.ParseFloat(result.Format.Duration, 64)
+		duration = probeDuration(result)
 	}
 	if duration <= 0 {
 		return 0, false

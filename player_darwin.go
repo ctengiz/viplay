@@ -12,6 +12,9 @@ void viplayAttachMpvView(void *nsWindow, mpv_handle *mpv);
 
 static mpv_event_property *viplayEventProperty(mpv_event *event) { return (mpv_event_property *)event->data; }
 static mpv_event_end_file *viplayEventEndFile(mpv_event *event) { return (mpv_event_end_file *)event->data; }
+static int viplaySetPropertyStringAsync(mpv_handle *mpv, const char *name, const char *value) {
+    return mpv_set_property_async(mpv, 0, name, MPV_FORMAT_STRING, (void *)&value);
+}
 */
 import "C"
 
@@ -97,7 +100,7 @@ func (p *nativePlayer) setProperty(name, value string) error {
 	cName, cValue := C.CString(name), C.CString(value)
 	defer C.free(unsafe.Pointer(cName))
 	defer C.free(unsafe.Pointer(cValue))
-	if code := C.mpv_set_property_string(p.handle, cName, cValue); code < 0 {
+	if code := C.viplaySetPropertyStringAsync(p.handle, cName, cValue); code < 0 {
 		return fmt.Errorf("%s=%s: %w", name, value, mpvError(code))
 	}
 	return nil
@@ -110,7 +113,7 @@ func (p *nativePlayer) command(args ...string) error {
 		argv[i] = C.CString(arg)
 		defer C.free(unsafe.Pointer(argv[i]))
 	}
-	if code := C.mpv_command(p.handle, &argv[0]); code < 0 {
+	if code := C.mpv_command_async(p.handle, 0, &argv[0]); code < 0 {
 		return fmt.Errorf("%s: %w", args[0], mpvError(code))
 	}
 	return nil
@@ -165,10 +168,18 @@ func (p *nativePlayer) eventLoop() {
 }
 
 func (p *nativePlayer) load(path string, play bool) error {
-	if err := p.setProperty("pause", mpvFlag(!play)); err != nil {
+	if !play {
+		if err := p.setProperty("pause", "yes"); err != nil {
+			return err
+		}
+	}
+	if err := p.command("loadfile", path, "replace"); err != nil {
 		return err
 	}
-	return p.command("loadfile", path, "replace")
+	if play {
+		return p.setProperty("pause", "no")
+	}
+	return nil
 }
 
 func (p *nativePlayer) stop() error { return p.command("stop") }

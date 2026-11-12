@@ -198,12 +198,14 @@ type ffprobeResult struct {
 		Duration string `json:"duration"`
 	} `json:"format"`
 	Streams []struct {
-		CodecName    string `json:"codec_name"`
-		CodecType    string `json:"codec_type"`
-		PixFmt       string `json:"pix_fmt,omitempty"`
-		Width        int    `json:"width,omitempty"`
-		Height       int    `json:"height,omitempty"`
-		AvgFrameRate string `json:"avg_frame_rate,omitempty"`
+		CodecName    string            `json:"codec_name"`
+		CodecType    string            `json:"codec_type"`
+		Duration     string            `json:"duration,omitempty"`
+		PixFmt       string            `json:"pix_fmt,omitempty"`
+		Width        int               `json:"width,omitempty"`
+		Height       int               `json:"height,omitempty"`
+		AvgFrameRate string            `json:"avg_frame_rate,omitempty"`
+		Tags         map[string]string `json:"tags,omitempty"`
 	} `json:"streams"`
 }
 
@@ -227,6 +229,10 @@ func transcodeOptions(path, locale string) ([]TranscodeOption, error) {
 	if err != nil {
 		return nil, err
 	}
+	return transcodeOptionsFromProbe(path, probe, ffmpeg, locale)
+}
+
+func transcodeOptionsFromProbe(path string, probe ffprobeResult, ffmpeg, locale string) ([]TranscodeOption, error) {
 	currentCodec := firstVideoCodec(probe)
 	if currentCodec == "" {
 		return nil, fmt.Errorf("%s", translate(locale, "error.videoTrackMissing"))
@@ -260,7 +266,27 @@ func transcodeVideoWithDelete(path, optionID, locale string, removeOriginal func
 }
 
 func transcodeVideoWithManager(path, optionID, locale string, manager *transcodeManager, removeOriginal func(string) error) (TranscodeResult, error) {
-	options, err := transcodeOptions(path, locale)
+	ffmpeg, err := requireMediaTool("ffmpeg", locale)
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	originalInfo, err := os.Stat(path)
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if manager != nil {
+		manager.start(path, profileByID(optionID).option.Codec, 0, cancel)
+		defer manager.finish()
+	}
+
+	probe, err := probeWithFFprobe(path, locale)
+	if err != nil {
+		return TranscodeResult{}, err
+	}
+	options, err := transcodeOptionsFromProbe(path, probe, ffmpeg, locale)
 	if err != nil {
 		return TranscodeResult{}, err
 	}
@@ -274,11 +300,15 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 	if selected == nil {
 		return TranscodeResult{}, fmt.Errorf("%s", translate(locale, "error.transcodeOptionUnavailable"))
 	}
-	ffmpeg, _ := requireMediaTool("ffmpeg", locale)
-	originalInfo, err := os.Stat(path)
-	if err != nil {
-		return TranscodeResult{}, err
+	if ctx.Err() != nil {
+		return TranscodeResult{}, fmt.Errorf("%s", translate(locale, "error.transcodeCancelled"))
 	}
+
+	duration := probeDuration(probe)
+	if manager != nil {
+		manager.setMeta(selected.Codec, duration)
+	}
+
 	dir := filepath.Dir(path)
 	base := strings.TrimSuffix(path, filepath.Ext(path)) + "_" + selected.ID
 	outputPath := availableOutput(base, selected.OutputExtension)
@@ -293,19 +323,8 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 	_ = os.Remove(tempPath)
 	defer os.Remove(tempPath)
 
-	duration, _ := mediaDuration(path, locale)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if manager != nil {
-		manager.start(path, selected.Codec, duration, cancel)
-		defer manager.finish()
-	}
-
 	profile := profileByID(selected.ID)
-	probe, probeErr := probeWithFFprobe(path, locale)
-	hasSubs := probeErr == nil && hasTextSubtitles(probe)
+	hasSubs := hasTextSubtitles(probe)
 
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
@@ -366,6 +385,10 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 					if us, parseErr := strconv.ParseInt(val, 10, 64); parseErr == nil && us >= 0 {
 						currentSec = float64(us) / 1000000.0
 					}
+				case "out_time":
+					if parsed, ok := parseFFmpegTimestamp(val); ok && parsed > currentSec {
+						currentSec = parsed
+					}
 				case "fps":
 					if f, parseErr := strconv.ParseFloat(val, 64); parseErr == nil {
 						fps = f
@@ -374,7 +397,12 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 					speed = val
 				case "progress":
 					if manager != nil {
-						manager.update(currentSec, fps, speed)
+						if val == "end" {
+							manager.update(currentSec, fps, speed)
+							manager.setStage("validating")
+						} else {
+							manager.update(currentSec, fps, speed)
+						}
 					}
 				}
 			}
@@ -390,8 +418,11 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 	if runErr != nil {
 		return TranscodeResult{}, mediaToolError(translate(locale, "error.transcodeFailed"), runErr, stderrBuf.Bytes())
 	}
+	if manager != nil {
+		manager.setStage("validating")
+	}
 	requireSmaller := removeOriginal != nil
-	if err := validateTranscode(path, tempPath, selected.ID, originalInfo.Size(), requireSmaller, locale); err != nil {
+	if err := validateTranscodeWithSourceProbe(probe, tempPath, selected.ID, originalInfo.Size(), requireSmaller, locale); err != nil {
 		return TranscodeResult{}, err
 	}
 	if err := os.Rename(tempPath, outputPath); err != nil {
@@ -495,7 +526,7 @@ func probeWithFFprobe(path, locale string) (ffprobeResult, error) {
 	if err != nil {
 		return ffprobeResult{}, err
 	}
-	output, runErr := exec.Command(ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type,pix_fmt,width,height,avg_frame_rate", "-of", "json", path).CombinedOutput()
+	output, runErr := exec.Command(ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type,duration,pix_fmt,width,height,avg_frame_rate:stream_tags=DURATION", "-of", "json", path).CombinedOutput()
 	if runErr != nil {
 		return ffprobeResult{}, mediaToolError(translate(locale, "error.durationFailed"), runErr, output)
 	}
@@ -506,10 +537,48 @@ func probeWithFFprobe(path, locale string) (ffprobeResult, error) {
 	return result, nil
 }
 
+func parseFFmpegTimestamp(value string) (float64, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.EqualFold(trimmed, "N/A") || strings.HasPrefix(trimmed, "-") {
+		return 0, false
+	}
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 3 {
+		return 0, false
+	}
+	hours, hErr := strconv.ParseFloat(parts[0], 64)
+	minutes, mErr := strconv.ParseFloat(parts[1], 64)
+	seconds, sErr := strconv.ParseFloat(parts[2], 64)
+	if hErr != nil || mErr != nil || sErr != nil {
+		return 0, false
+	}
+	total := hours*3600 + minutes*60 + seconds
+	return total, total >= 0 && !math.IsNaN(total) && !math.IsInf(total, 0)
+}
+
+func probeDuration(probe ffprobeResult) float64 {
+	if duration, err := strconv.ParseFloat(probe.Format.Duration, 64); err == nil && duration > 0 {
+		return duration
+	}
+	for _, stream := range probe.Streams {
+		if duration, err := strconv.ParseFloat(stream.Duration, 64); err == nil && duration > 0 {
+			return duration
+		}
+		for key, value := range stream.Tags {
+			if strings.EqualFold(key, "DURATION") {
+				if duration, ok := parseFFmpegTimestamp(value); ok && duration > 0 {
+					return duration
+				}
+			}
+		}
+	}
+	return 0
+}
+
 // mediaInfoFromProbe fills the fields the pure Go MP4 reader leaves empty for other containers.
 func mediaInfoFromProbe(info MediaInfo, probe ffprobeResult) MediaInfo {
 	info.ProbeAvailable = true
-	if duration, err := strconv.ParseFloat(probe.Format.Duration, 64); err == nil {
+	if duration := probeDuration(probe); duration > 0 {
 		info.Duration = duration
 	}
 	for _, stream := range probe.Streams {
@@ -540,16 +609,20 @@ func firstVideoCodec(result ffprobeResult) string {
 }
 
 func validateTranscode(source, output, codec string, sourceSize int64, requireSmaller bool, locale string) error {
+	sourceProbe, err := probeWithFFprobe(source, locale)
+	if err != nil {
+		return err
+	}
+	return validateTranscodeWithSourceProbe(sourceProbe, output, codec, sourceSize, requireSmaller, locale)
+}
+
+func validateTranscodeWithSourceProbe(sourceProbe ffprobeResult, output, codec string, sourceSize int64, requireSmaller bool, locale string) error {
 	info, err := os.Stat(output)
 	if err != nil || info.Size() == 0 {
 		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
 	}
 	if requireSmaller && info.Size() >= sourceSize {
 		return fmt.Errorf("%s", translate(locale, "error.transcodeNotSmaller"))
-	}
-	sourceProbe, err := probeWithFFprobe(source, locale)
-	if err != nil {
-		return err
 	}
 	outputProbe, err := probeWithFFprobe(output, locale)
 	if err != nil {
@@ -559,10 +632,10 @@ func validateTranscode(source, output, codec string, sourceSize int64, requireSm
 	if firstVideoCodec(outputProbe) != wantCodec {
 		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
 	}
-	sourceDuration, sourceErr := strconv.ParseFloat(sourceProbe.Format.Duration, 64)
-	outputDuration, outputErr := strconv.ParseFloat(outputProbe.Format.Duration, 64)
+	sourceDuration := probeDuration(sourceProbe)
+	outputDuration := probeDuration(outputProbe)
 	tolerance := math.Max(2, sourceDuration*.01)
-	if sourceErr != nil || outputErr != nil || sourceDuration <= 0 || math.Abs(sourceDuration-outputDuration) > tolerance {
+	if sourceDuration <= 0 || outputDuration <= 0 || math.Abs(sourceDuration-outputDuration) > tolerance {
 		return fmt.Errorf("%s", translate(locale, "error.transcodeValidationFailed"))
 	}
 	return nil
@@ -573,8 +646,8 @@ func mediaDuration(path, locale string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	duration, err := strconv.ParseFloat(result.Format.Duration, 64)
-	if err != nil || duration <= 0 {
+	duration := probeDuration(result)
+	if duration <= 0 {
 		return 0, fmt.Errorf("%s", translate(locale, "error.durationFailed"))
 	}
 	return duration, nil

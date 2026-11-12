@@ -41,8 +41,11 @@ const transcodeTrashOriginal = ref(localStorage.getItem('viplay.transcode.trashO
 watch(transcodeTrashOriginal, val => {
   localStorage.setItem('viplay.transcode.trashOriginal', String(val))
 })
-const transcodeProgress = ref({ active: false, percent: 0, speed: '', fps: 0, currentTime: 0, totalTime: 0 })
+const emptyTranscodeProgress = () => ({ active: false, path: '', name: '', codec: '', stage: '', percent: 0, speed: '', fps: 0, currentTime: 0, totalTime: 0 })
+const transcodeProgress = ref(emptyTranscodeProgress())
 let transcodePollTimer = null
+let probeTimer = null
+let lastMarkedPath = ''
 const sheetFrameCount = ref(12)
 const sheetImageWidth = ref(320)
 const mediaInfo = ref(null)
@@ -77,6 +80,21 @@ const progress = computed(() => `${duration.value ? current.value / duration.val
 const markerPositions = computed(() => splitMarkers.value.map(seconds => ({ seconds, left: `${seconds / duration.value * 100}%` })))
 const volumeProgress = computed(() => `${volume.value * 100}%`)
 const thumbnailPercent = computed(() => thumbnailProgress.value.total ? `${thumbnailProgress.value.completed / thumbnailProgress.value.total * 100}%` : '0%')
+const transcodeIndeterminate = computed(() => transcodeProgress.value.active && (transcodeProgress.value.stage === 'preparing' || (transcodeProgress.value.stage !== 'validating' && transcodeProgress.value.totalTime <= 0 && transcodeProgress.value.percent <= 0)))
+const transcodeStageLabel = computed(() => {
+  if (!transcodeProgress.value.active) return ''
+  if (transcodeProgress.value.stage === 'validating') return t('transcode.validating')
+  if (transcodeProgress.value.stage === 'preparing' && transcodeProgress.value.currentTime <= 0 && transcodeProgress.value.percent <= 0) return t('transcode.preparing')
+  if (transcodeProgress.value.totalTime > 0) return `${transcodeProgress.value.percent.toFixed(0)}%`
+  if (transcodeProgress.value.currentTime > 0) return fmt(transcodeProgress.value.currentTime)
+  return t('transcode.preparing')
+})
+const transcodeShortCodec = computed(() => {
+  const codec = transcodeProgress.value.codec || ''
+  if (codec.startsWith('HEVC')) return 'HEVC'
+  if (codec.startsWith('MP4')) return 'MP4'
+  return codec
+})
 const speeds = [.5, .75, 1, 1.25, 1.5, 2]
 const sheetSizes = computed(() => [
   { label: t('sheet.size.small'), value: 240 },
@@ -179,7 +197,11 @@ async function loadRecent() {
 
 async function markPlayed() {
   playing.value = true
-  if (item.value?.path) await MarkPlayed(item.value.path)
+  const path = item.value?.path
+  if (path && path !== lastMarkedPath) {
+    lastMarkedPath = path
+    await MarkPlayed(path)
+  }
 }
 
 async function splitCurrent() {
@@ -268,8 +290,40 @@ async function runContactSheet() {
   finally { processing.value = '' }
 }
 
+function applyTranscodeProgress(status) {
+  if (!status || !status.active) {
+    transcodeProgress.value = emptyTranscodeProgress()
+    return
+  }
+  const prev = transcodeProgress.value
+  const samePath = prev.active && prev.path === status.path
+  const knownTotal = status.totalTime > 0 ? status.totalTime : (samePath ? prev.totalTime : (durations.value[status.path] || 0))
+  const currentTime = status.currentTime > 0 ? status.currentTime : 0
+  const percent = status.stage === 'validating'
+    ? 100
+    : (status.percent > 0 ? status.percent : (knownTotal > 0 && currentTime > 0 ? Math.min(100, Math.max(0, (currentTime / knownTotal) * 100)) : 0))
+  transcodeProgress.value = {
+    ...status,
+    codec: status.codec || (samePath ? prev.codec : ''),
+    totalTime: knownTotal,
+    currentTime: status.stage === 'validating' && knownTotal > 0 ? knownTotal : currentTime,
+    percent,
+  }
+}
+
+function isEncodingPath(path) {
+  return !!(path && transcodeProgress.value.active && transcodeProgress.value.path === path)
+}
+
+async function focusEncodingItem() {
+  showQueue.value = true
+  await nextTick()
+  queueList.value?.querySelector('.queue-item.encoding')?.scrollIntoView({ block: 'nearest' })
+}
+
 async function requestTranscode() {
   if (!item.value || item.value.kind !== 'video') { notify('error', t('error.noVideoTitle'), t('transcode.noVideo')); return }
+  if (transcodeProgress.value.active) { notify('error', t('transcode.errorTitle'), t('error.transcodeBusy')); return }
   if (processing.value) { notify('error', t('delete.busyTitle'), t('delete.busy')); return }
   processing.value = 'options'
   try {
@@ -282,36 +336,63 @@ async function requestTranscode() {
 }
 
 async function runTranscode() {
-  if (!item.value || !selectedTranscode.value || processing.value) return
+  if (!item.value || !selectedTranscode.value || processing.value || transcodeProgress.value.active) return
   const source = item.value
   const option = transcodeOptions.value.find(candidate => candidate.id === selectedTranscode.value)
   if (!option) return
   const shouldTrash = transcodeTrashOriginal.value
   showTranscodeDialog.value = false
-  if (video.value && !video.value.paused) video.value.pause()
-  processing.value = 'transcode'
-  transcodeProgress.value = { active: true, percent: 0, speed: '', fps: 0, currentTime: 0, totalTime: 0 }
-  notify('progress', t('transcode.progressTitle'), t('transcode.progress', { codec: option.codec }))
+  if (shouldTrash && video.value && !video.value.paused) video.value.pause()
+  const knownDuration = durations.value[source.path] || (item.value?.path === source.path ? duration.value : 0) || 0
+  applyTranscodeProgress({
+    active: true,
+    path: source.path,
+    name: source.name,
+    codec: option.codec,
+    stage: 'preparing',
+    percent: 0,
+    speed: '',
+    fps: 0,
+    currentTime: 0,
+    totalTime: knownDuration,
+  })
   await nextTick()
   if (transcodePollTimer) window.clearInterval(transcodePollTimer)
   transcodePollTimer = window.setInterval(async () => {
     try {
       const status = await TranscodeStatus()
-      if (status && status.active) {
-        transcodeProgress.value = status
-      }
+      if (status?.active) applyTranscodeProgress(status)
     } catch {}
-  }, 350)
+  }, 500)
   try {
     const result = await TranscodeVideo(source.path, option.id, shouldTrash)
+    const activePath = item.value?.path
+    const sourceIndex = queue.value.findIndex(entry => entry.path === source.path)
     if (result.deleted) {
-      queue.value.splice(index.value, 1, result.item)
-      current.value = 0
-      playing.value = false
-      subtitle.value = null
+      forgetDeletedThumbnail(source.path)
+      if (lastMarkedPath === source.path) lastMarkedPath = ''
+      delete durations.value[source.path]
+      if (activePath === source.path) {
+        const wasPlaying = playing.value || !!(video.value && !video.value.paused)
+        autoplayOnReady = wasPlaying
+        current.value = 0
+        playing.value = false
+        playbackURL.value = ''
+        subtitle.value = null
+        if (sourceIndex >= 0) {
+          queue.value.splice(sourceIndex, 1, result.item)
+          index.value = sourceIndex
+        }
+      } else if (sourceIndex >= 0) {
+        queue.value.splice(sourceIndex, 1, result.item)
+        if (activePath) index.value = Math.max(0, queue.value.findIndex(entry => entry.path === activePath))
+      }
       notify('success', t('transcode.successTitle'), t('transcode.success', { name: result.item.name, saved: fileSize(result.originalSize - result.outputSize) }))
     } else {
-      queue.value.splice(index.value + 1, 0, result.item)
+      if (sourceIndex >= 0) {
+        queue.value.splice(sourceIndex + 1, 0, result.item)
+        if (activePath) index.value = Math.max(0, queue.value.findIndex(entry => entry.path === activePath))
+      }
       const savedDiff = result.originalSize - result.outputSize
       if (savedDiff > 0) {
         notify('success', t('transcode.successTitle'), t('transcode.successKept', { name: result.item.name, saved: fileSize(savedDiff) }))
@@ -331,8 +412,7 @@ async function runTranscode() {
       window.clearInterval(transcodePollTimer)
       transcodePollTimer = null
     }
-    transcodeProgress.value = { active: false, percent: 0, speed: '', fps: 0, currentTime: 0, totalTime: 0 }
-    processing.value = ''
+    transcodeProgress.value = emptyTranscodeProgress()
   }
 }
 
@@ -467,10 +547,10 @@ async function select(i, autoplay = false) {
   }
   isSeeking.value = false
   wasPlayingBeforeSeek = false
+  autoplayOnReady = autoplay
   index.value = i
   playing.value = false
   playbackURL.value = ''
-  autoplayOnReady = autoplay
   current.value = 0
   subtitle.value = null
 }
@@ -680,12 +760,19 @@ function copyFullPath() {
 
 async function navigateDirectory(direction) {
   if (!item.value) return
+  if (queue.value.length > 1) {
+    const target = index.value + direction
+    if (target < 0 || target >= queue.value.length) return
+    select(target, true)
+    return
+  }
   const activePath = item.value.path
   const items = await folderItems(activePath)
   const activeIndex = items.findIndex(entry => entry.path === activePath)
   const target = activeIndex + direction
   if (target < 0 || target >= items.length) return
   queue.value = items
+  libraryView.value = 'folder'
   select(target, true)
 }
 
@@ -695,9 +782,10 @@ const deleteTarget = ref(null)
 // Deletes the playing video by default; the playlist context menu passes any other row.
 function requestDelete(target = item.value) {
   if (!target) { notify('error', t('error.noVideoTitle'), t('delete.noVideo')); return }
+  if (isEncodingPath(target.path)) { notify('error', t('delete.busyTitle'), t('delete.encodingBusy')); return }
   if (processing.value) { notify('error', t('delete.busyTitle'), t('delete.busy')); return }
   deleteTarget.value = target
-  wasPlayingBeforeDelete = playing.value || !!(video.value && !video.value.paused)
+  wasPlayingBeforeDelete = target.path === item.value?.path && (playing.value || !!(video.value && !video.value.paused))
   showDeleteDialog.value = true
 }
 
@@ -722,6 +810,11 @@ function forgetDeletedThumbnail(path) {
 async function confirmDelete() {
   const deleting = deleteTarget.value ?? item.value
   if (!deleting || processing.value) return
+  if (isEncodingPath(deleting.path)) {
+    closeDeleteDialog()
+    notify('error', t('delete.busyTitle'), t('delete.encodingBusy'))
+    return
+  }
   if (deleting.path !== item.value?.path) return deleteOtherRow(deleting)
   const wasPlaying = wasPlayingBeforeDelete || playing.value || !!(video.value && !video.value.paused)
   wasPlayingBeforeDelete = false
@@ -745,6 +838,8 @@ async function confirmDelete() {
   try {
     await DeleteVideo(deleting.path)
     forgetDeletedThumbnail(deleting.path)
+    if (lastMarkedPath === deleting.path) lastMarkedPath = ''
+    delete durations.value[deleting.path]
     const currentIndex = index.value
     const hasNext = queue.value.length > 1
     const nextIndex = currentIndex >= queue.value.length - 1 ? Math.max(0, queue.value.length - 2) : currentIndex
@@ -770,6 +865,8 @@ async function deleteOtherRow(deleting) {
   try {
     await DeleteVideo(deleting.path)
     forgetDeletedThumbnail(deleting.path)
+    if (lastMarkedPath === deleting.path) lastMarkedPath = ''
+    delete durations.value[deleting.path]
     const playingPath = item.value?.path
     queue.value = queue.value.filter(entry => entry.path !== deleting.path)
     index.value = Math.max(0, queue.value.findIndex(entry => entry.path === playingPath))
@@ -822,7 +919,7 @@ watch(playing, isPlaying => {
       pausedForPlayback = true
       PauseThumbnailGeneration().then(refreshThumbnailProgress).catch(() => {})
     } else if (!isPlaying && pausedForPlayback && thumbnailProgress.value.paused) {
-      if (isSeeking.value) return
+      if (isSeeking.value || autoplayOnReady || playbackPreparing.value) return
       pausedForPlayback = false
       ResumeThumbnailGeneration().then(refreshThumbnailProgress).catch(() => {})
     }
@@ -841,6 +938,10 @@ watch(() => queue.value.map(entry => entry.path).join('\n'), (newPathsStr, oldPa
 }, { immediate: true })
 // Keyed by path so reloading the folder or playlist does not restart the video that is already playing.
 watch(() => item.value?.path, async () => {
+  if (probeTimer) {
+    window.clearTimeout(probeTimer)
+    probeTimer = null
+  }
   const value = item.value
   splitMarkers.value = []
   proxyFallbackAttempted = false
@@ -851,15 +952,36 @@ watch(() => item.value?.path, async () => {
   playbackPreparing.value = !!value
   current.value = 0
   duration.value = 0
-  if (!value) { mediaInfo.value = null; playbackPreparing.value = false; if (nativeEngine.value) video.value.stop(); return }
+  mediaInfo.value = null
+  if (!value) { playbackPreparing.value = false; if (nativeEngine.value) video.value.stop(); return }
   if (nativeEngine.value) {
     // libmpv opens every supported container directly, so no playback proxy is prepared.
     playbackPreparing.value = false
-    video.value.load(value.path, shouldAutoplay).catch(error => { if (run === playbackRun) notify('error', t('playback.errorTitle'), String(error)) })
-    try {
-      const info = await ProbeMedia(value.path)
-      if (run === playbackRun) mediaInfo.value = info
-    } catch { if (run === playbackRun) mediaInfo.value = null }
+    video.value.load(value.path, shouldAutoplay).catch(error => {
+      if (pausedForPlayback && thumbnailProgress.value.paused && !playing.value) {
+        pausedForPlayback = false
+        ResumeThumbnailGeneration().then(refreshThumbnailProgress).catch(() => {})
+      }
+      if (run === playbackRun) notify('error', t('playback.errorTitle'), String(error))
+    })
+    probeTimer = window.setTimeout(async () => {
+      probeTimer = null
+      if (run !== playbackRun) return
+      try {
+        const info = await ProbeMedia(value.path)
+        if (run === playbackRun) {
+          if (info.duration > 0) durations.value[value.path] = info.duration
+          mediaInfo.value = {
+            ...info,
+            width: info.width || mediaInfo.value?.width || 0,
+            height: info.height || mediaInfo.value?.height || 0,
+            duration: info.duration || duration.value || 0,
+          }
+        }
+      } catch {
+        if (run === playbackRun) mediaInfo.value = null
+      }
+    }, 60)
     return
   }
   const legacyFormat = /\.(mpg|mpeg|flv|avi|wmv|asf|mkv)$/i.test(value.path)
@@ -960,6 +1082,7 @@ watch(subtitle, value => { if (nativeEngine.value) video.value.setSubtitle(value
 onMounted(() => {
   // Files opened from Finder before the UI loaded are queued in the backend until the engine is chosen.
   initNativeEngine().then(PendingSystemFiles).then(files => handleDroppedFiles(files)).catch(() => {})
+  TranscodeStatus().then(status => { if (status?.active) applyTranscodeProgress(status) }).catch(() => {})
   window.addEventListener('keydown', onKey)
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('dragenter', onWindowDragOver)
@@ -971,11 +1094,13 @@ onMounted(() => {
   window.addEventListener('drop', onWindowDrop)
   Events.On('files-dropped', onWailsFilesDropped)
   Events.On('playlist:action', ({ data }) => handlePlaylistAction(data.action, decodeURIComponent(String(data.data).trim())))
+  Events.On('transcode:progress', ({ data }) => applyTranscodeProgress(Array.isArray(data) ? data[0] : data))
 })
 onBeforeUnmount(() => {
   stageObserver?.disconnect()
   queueObserver?.disconnect()
   window.clearTimeout(visibleTimer)
+  if (probeTimer) window.clearTimeout(probeTimer)
   window.removeEventListener('resize', updateVideoArea)
   window.removeEventListener('resize', syncFullscreen)
   window.removeEventListener('mousemove', wakeCursor)
@@ -1018,8 +1143,17 @@ onBeforeUnmount(() => {
           <label class="language-picker" :title="t('language.label')"><Languages :size="16" /><select :value="locale" :aria-label="t('language.label')" @change="changeLanguage"><option v-for="language in locales" :key="language.code" :value="language.code">{{ language.label }}</option></select><ChevronDown :size="12" /></label>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'split', marked: splitMarkers.length }" :aria-label="splitMarkers.length ? t('actions.multiSplit', { count: splitMarkers.length }) : t('actions.split')" :title="splitMarkers.length ? t('actions.multiSplitTitle', { count: splitMarkers.length }) : t('actions.splitTitle')" @click="splitAtMarkers"><LoaderCircle v-if="processing === 'split'" class="spin" :size="20" /><Scissors v-else :size="19" /><span v-if="splitMarkers.length" class="marker-count">{{ splitMarkers.length }}</span></button>
           <button class="icon-btn operation-btn" :class="{ processing: processing === 'sheet' }" :aria-label="t('actions.contactSheet')" :title="t('actions.contactSheetTitle')" @click="createContactSheet"><LoaderCircle v-if="processing === 'sheet'" class="spin" :size="20" /><Images v-else :size="19" /></button>
-          <button class="icon-btn operation-btn" :class="{ processing: processing === 'transcode' || processing === 'options', 'can-cancel': processing === 'transcode' }" :disabled="!item || item.kind !== 'video' || (!!processing && processing !== 'transcode')" :aria-label="processing === 'transcode' ? t('transcode.cancelAction') : t('actions.transcode')" :title="processing === 'transcode' ? t('transcode.cancelAction') : t('actions.transcodeTitle')" @click="processing === 'transcode' ? cancelTranscode() : requestTranscode()"><X v-if="processing === 'transcode'" :size="19" /><LoaderCircle v-else-if="processing === 'options'" class="spin" :size="20" /><RefreshCw v-else :size="19" /></button>
-          <button class="icon-btn danger" :disabled="processing === 'delete'" :aria-label="t('actions.delete')" :title="t('actions.deleteTitle')" @click="requestDelete()"><Trash2 :size="19" /></button>
+          <div v-if="transcodeProgress.active" class="transcode-pill" role="status" aria-live="polite">
+            <button class="transcode-pill-main" :aria-label="t('transcode.showStatus')" :title="`${transcodeProgress.name} · ${transcodeProgress.codec}`" @click="focusEncodingItem">
+              <LoaderCircle class="spin" :size="14" />
+              <span>{{ transcodeShortCodec }}</span>
+              <strong>{{ transcodeStageLabel }}</strong>
+            </button>
+            <button class="transcode-pill-stop" :aria-label="t('transcode.cancelAction')" :title="t('transcode.cancelAction')" @click="cancelTranscode"><X :size="13" /></button>
+            <i class="transcode-pill-bar" :class="{ indeterminate: transcodeIndeterminate }" :style="transcodeIndeterminate ? undefined : { width: `${transcodeProgress.percent}%` }" />
+          </div>
+          <button v-else class="icon-btn operation-btn" :class="{ processing: processing === 'options' }" :disabled="!item || item.kind !== 'video' || !!processing" :aria-label="t('actions.transcode')" :title="t('actions.transcodeTitle')" @click="requestTranscode"><LoaderCircle v-if="processing === 'options'" class="spin" :size="20" /><RefreshCw v-else :size="19" /></button>
+          <button class="icon-btn danger" :disabled="processing === 'delete'" :aria-label="t('actions.delete')" :title="item && isEncodingPath(item.path) ? t('delete.encodingBusy') : t('actions.deleteTitle')" @click="requestDelete()"><Trash2 :size="19" /></button>
           <button class="icon-btn" :aria-label="t('shortcuts.open')" :title="t('shortcuts.open')" @click="showShortcuts = true"><Keyboard :size="19" /></button>
           <button class="icon-btn" :class="{ active: showQueue }" :aria-label="t('actions.showQueue')" :title="t('actions.showQueue')" @click="showQueue = !showQueue"><ListVideo :size="20" /></button>
         </div>
@@ -1082,6 +1216,26 @@ onBeforeUnmount(() => {
         <button :class="{ selected: item && libraryView === 'folder' }" :disabled="!item" @click="loadFolder"><Film :size="15" />{{ t('library.folder') }}</button>
         <button :class="{ selected: libraryView === 'recent' }" @click="loadRecent"><RotateCcw :size="15" />{{ t('library.recent') }}</button>
       </div>
+      <div v-if="transcodeProgress.active" class="transcode-status" role="status" aria-live="polite">
+        <div class="transcode-status-head">
+          <div class="transcode-status-title">
+            <LoaderCircle class="spin" :size="14" />
+            <strong :title="transcodeProgress.path">{{ transcodeProgress.name || t('transcode.progressTitle') }}</strong>
+          </div>
+          <button :aria-label="t('transcode.cancelAction')" :title="t('transcode.cancelAction')" @click="cancelTranscode"><X :size="14" /></button>
+        </div>
+        <div class="transcode-progress-track" :class="{ indeterminate: transcodeIndeterminate }">
+          <div class="transcode-progress-fill" :style="transcodeIndeterminate ? undefined : { width: `${transcodeProgress.percent}%` }" />
+        </div>
+        <div class="transcode-progress-meta">
+          <span>{{ transcodeStageLabel }}</span>
+          <span v-if="transcodeProgress.codec">{{ transcodeShortCodec }}</span>
+          <span v-if="transcodeProgress.totalTime > 0">{{ fmt(transcodeProgress.currentTime) }} / {{ fmt(transcodeProgress.totalTime) }}</span>
+          <span v-else-if="transcodeProgress.currentTime > 0">{{ fmt(transcodeProgress.currentTime) }}</span>
+          <span v-if="transcodeProgress.speed">{{ transcodeProgress.speed }}</span>
+          <span v-if="transcodeProgress.fps > 0">{{ Math.round(transcodeProgress.fps) }} fps</span>
+        </div>
+      </div>
       <div v-if="thumbnailProgress.active" class="thumbnail-progress">
         <div class="thumbnail-progress-head"><small>{{ thumbnailProgress.paused ? t('thumbnails.paused', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) : t('thumbnails.generating', { completed: thumbnailProgress.completed, total: thumbnailProgress.total }) }}</small><div>
           <button :aria-label="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" :title="thumbnailProgress.paused ? t('thumbnails.resume') : t('thumbnails.pause')" @click="toggleThumbnailPause"><Play v-if="thumbnailProgress.paused" :size="14" /><Pause v-else :size="14" /></button>
@@ -1091,10 +1245,10 @@ onBeforeUnmount(() => {
       </div>
       <div ref="queueList" class="queue-list">
         <template v-if="queue.length">
-          <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: i === index }" :data-path="entry.path" :style="{ '--custom-contextmenu': 'playlist-item', '--custom-contextmenu-data': encodeURIComponent(entry.path) }" @click="select(i, true)">
+          <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: i === index, encoding: isEncodingPath(entry.path) }" :data-path="entry.path" :style="{ '--custom-contextmenu': 'playlist-item', '--custom-contextmenu-data': encodeURIComponent(entry.path) }" @click="select(i, true)">
             <span class="queue-number"><Speaker v-if="i === index" :size="15" /><template v-else>{{ String(i + 1).padStart(2, '0') }}</template></span>
             <span class="thumb"><img v-if="entry.kind === 'video' && thumbnailReady[entry.path]" :src="`${entry.thumbnailUrl}&v=${thumbnailRevision}`" alt="" loading="lazy" @error="$event.currentTarget.style.display = 'none'"><LoaderCircle v-else-if="entry.kind === 'video' && thumbnailProgress.active && thumbnailProgress.current === entry.name" class="spin" :size="18" /><Film v-else :size="22" /><i v-if="i === index && playing"><span /><span /><span /></i></span>
-            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ [fileType(entry.name), durations[entry.path] ? fmt(durations[entry.path]) : '', fileSize(entry.size)].filter(Boolean).join(' · ') }}</small></span><ChevronRight :size="16" />
+            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ [fileType(entry.name), durations[entry.path] ? fmt(durations[entry.path]) : '', fileSize(entry.size)].filter(Boolean).join(' · ') }}</small></span><LoaderCircle v-if="isEncodingPath(entry.path)" class="spin queue-encoding-icon" :size="15" /><ChevronRight v-else :size="16" />
           </button>
         </template>
         <div v-else class="queue-empty"><ListVideo :size="28" /><p>{{ t('queue.empty') }}</p><button @click="openVideos">{{ t('queue.addVideo') }}</button></div>
@@ -1102,26 +1256,14 @@ onBeforeUnmount(() => {
     </aside>
 
     <Transition name="notice">
-      <div v-if="notice" class="operation-notice" :class="[notice.type, { 'transcode-notice': transcodeProgress.active }]" role="status" aria-live="polite">
+      <div v-if="notice" class="operation-notice" :class="[notice.type]" role="status" aria-live="polite">
         <LoaderCircle v-if="notice.type === 'progress'" class="spin" :size="22" />
         <CheckCircle2 v-else-if="notice.type === 'success'" :size="22" />
         <AlertCircle v-else :size="22" />
         <span>
           <strong>{{ notice.title }}</strong>
           <small>{{ notice.detail }}</small>
-          <template v-if="transcodeProgress.active">
-            <div class="transcode-progress-track">
-              <div class="transcode-progress-fill" :style="{ width: `${transcodeProgress.percent}%` }"></div>
-            </div>
-            <div class="transcode-progress-meta">
-              <span>{{ transcodeProgress.percent.toFixed(0) }}%</span>
-              <span v-if="transcodeProgress.speed">{{ transcodeProgress.speed }}</span>
-              <span v-if="transcodeProgress.fps > 0">{{ Math.round(transcodeProgress.fps) }} fps</span>
-              <span v-if="transcodeProgress.totalTime > 0">{{ fmt(transcodeProgress.currentTime) }} / {{ fmt(transcodeProgress.totalTime) }}</span>
-            </div>
-          </template>
         </span>
-        <button v-if="transcodeProgress.active" class="notice-stop" :title="t('transcode.cancelAction')" :aria-label="t('transcode.cancelAction')" @click="cancelTranscode"><X :size="14" /></button>
         <button class="notice-close" :aria-label="t('notice.close')" @click="notice = null"><X :size="15" /></button>
       </div>
     </Transition>

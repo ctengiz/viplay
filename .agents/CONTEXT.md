@@ -2,7 +2,7 @@
 
 ## Stack
 
-- Go 1.26 and Wails v3.0.0
+- Go 1.26 and Wails v3.1.0
 - Vue 3, Vite, and Lucide
 - Desktop targets: macOS, Windows, and Linux
 - Media runtime: libmpv, `ffmpeg`, and `ffprobe` (bundled into macOS packages from Homebrew; system FFmpeg on Windows/Linux)
@@ -33,7 +33,7 @@
 - `frontend/scripts/check-i18n.mjs`: embedded JSON key-parity, usage, and non-empty-value validation
 - `frontend/src/styles.css`: visual styling, notifications, and language selector
 - `main_test.go`: backend, localization, FFmpeg errors, and media integration tests
-- `Taskfile.yml`, `build/`: Wails build/package tasks (tracked; macOS packaging runs `bundle_media.py`; `wails3 task install` installs into /Applications)
+- `Taskfile.yml`, `build/`: Wails build/package tasks (tracked; `wails3 task app` / `package` creates `bin/ViPlay.app` with `bundle_media.py`; `wails3 task install` installs into `/Applications`)
 - `build/config.yml`: app metadata and `fileAssociations`; `wails3 task common:update:build-assets` regenerates `Info.plist`, the NSIS associations, and the Linux desktop file from it
 
 ## Fast routing

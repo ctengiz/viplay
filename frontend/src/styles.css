@@ -82,3 +82,26 @@ html.native-engine, html.native-engine .app, html.native-engine .player-shell, h
 /* The window keeps the macOS traffic lights over the top-left corner of the full-size content. */
 html.mac .topbar{padding-left:88px}
 .queue-tabs{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--line)}.queue-tabs button{flex:1;height:30px;border:0;border-radius:7px;background:transparent;color:#8c8f96;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px;cursor:pointer}.queue-tabs button:hover:not(:disabled){background:#16181c;color:#f3f0e8}.queue-tabs button.selected{background:#1b1e23;color:var(--amber)}.queue-tabs button:disabled{opacity:.4;cursor:default}
+.transcode-pill{position:relative;height:32px;display:inline-flex;align-items:center;margin:0 3px;border:1px solid rgba(231,168,75,.34);border-radius:16px;background:rgba(231,168,75,.09);overflow:hidden;--wails-draggable:none;-webkit-app-region:no-drag}
+.transcode-pill-main{height:100%;padding:0 8px 0 10px;border:0;background:transparent;color:#e8e5de;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-variant-numeric:tabular-nums;cursor:pointer}
+.transcode-pill-main:hover{background:rgba(231,168,75,.12)}
+.transcode-pill-main svg{flex:none;color:var(--amber)}
+.transcode-pill-main span{color:#9a9da4;font-weight:500}
+.transcode-pill-main strong{color:var(--amber);font-size:11px;font-weight:600}
+.transcode-pill-stop{width:28px;height:100%;padding:0;border:0;border-left:1px solid rgba(231,168,75,.22);background:transparent;color:#a8aab0;display:grid;place-items:center;cursor:pointer}
+.transcode-pill-stop:hover{background:rgba(240,107,98,.2);color:#ff857c}
+.transcode-pill-bar{position:absolute;left:0;bottom:0;height:2px;background:var(--amber);transition:width .2s ease-out;pointer-events:none}
+.transcode-pill-bar.indeterminate{width:38%;animation:transcode-slide 1.2s ease-in-out infinite}
+.transcode-status{padding:11px 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(231,168,75,.07),#0c0e11)}
+.transcode-status-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.transcode-status-title{min-width:0;display:flex;align-items:center;gap:7px;color:var(--amber)}
+.transcode-status-title svg{flex:none}
+.transcode-status-title strong{min-width:0;color:#ece9e2;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.transcode-status-head button{flex:none;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:#8c8f96;display:grid;place-items:center;cursor:pointer}
+.transcode-status-head button:hover{background:rgba(240,107,98,.18);color:#ff857c}
+.transcode-status .transcode-progress-track{margin-top:8px}
+.transcode-progress-track.indeterminate .transcode-progress-fill{width:36%;border-radius:2px;animation:transcode-slide 1.2s ease-in-out infinite}
+.transcode-status .transcode-progress-meta{flex-wrap:wrap;gap:4px 8px;margin-top:6px;font-variant-numeric:tabular-nums}
+.queue-item.encoding .queue-copy strong{color:#f2d199}
+.queue-encoding-icon{color:var(--amber)}
+@keyframes transcode-slide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}

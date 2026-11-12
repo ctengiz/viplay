@@ -9,7 +9,7 @@ ViPlay is licensed under the GNU General Public License, version 3 or (at your o
 | [Wails v3](https://github.com/wailsapp/wails) | MIT |
 | [mp4ff](https://github.com/Eyevinn/mp4ff) | MIT |
 | [goh264](https://github.com/thesyncim/goh264) | LGPL-2.1 |
-| [xdg](https://github.com/adrg/xdg) | MIT |
+| [purego](https://github.com/ebitengine/purego) | Apache-2.0 |
 | [Vue](https://github.com/vuejs/core) | MIT |
 | [Lucide](https://github.com/lucide-icons/lucide) | ISC |
 | [@wailsio/runtime](https://github.com/wailsapp/wails) | MIT |
