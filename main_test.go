@@ -898,3 +898,99 @@ func TestProbeDurationAndFFmpegTimestampFallback(t *testing.T) {
 		t.Fatalf("probeDuration(tag) = %v, want 123.5", got)
 	}
 }
+
+func TestFormatConcatDemuxerList(t *testing.T) {
+	got := formatConcatDemuxerList([]string{"/tmp/part1.mp4", "/tmp/it's_part2.mp4"})
+	want := "ffconcat version 1.0\nfile '/tmp/part1.mp4'\nfile '/tmp/it'\\''s_part2.mp4'\n"
+	if got != want {
+		t.Fatalf("formatConcatDemuxerList = %q, want %q", got, want)
+	}
+}
+
+func TestMergeVideosWithSystemFFmpeg(t *testing.T) {
+	ffmpegPath, err := requireMediaTool("ffmpeg", defaultLocale)
+	if err != nil {
+		t.Skip("ffmpeg not installed:", err)
+	}
+	if _, err := requireMediaTool("ffprobe", defaultLocale); err != nil {
+		t.Skip("ffprobe not installed:", err)
+	}
+	dir := t.TempDir()
+	part1 := filepath.Join(dir, "clip1.mp4")
+	part2 := filepath.Join(dir, "clip2.mp4")
+	incompatible := filepath.Join(dir, "wide.mp4")
+	for _, spec := range []struct {
+		path string
+		size string
+	}{
+		{part1, "160x90"},
+		{part2, "160x90"},
+		{incompatible, "320x180"},
+	} {
+		cmd := exec.Command(
+			ffmpegPath,
+			"-hide_banner", "-loglevel", "error", "-y",
+			"-f", "lavfi", "-i", "color=c=navy:s="+spec.size+":r=25:d=1.2",
+			"-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "25",
+			spec.path,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("create synthetic video %s: %v\n%s", spec.path, err, out)
+		}
+	}
+
+	server := newMediaServer()
+	server.allow(part1)
+	server.allow(part2)
+	server.allow(incompatible)
+	app := NewApp(server)
+
+	if _, err := app.MergeVideos([]string{part1}, false); err == nil {
+		t.Fatal("MergeVideos accepted fewer than two files")
+	}
+	if _, err := app.MergeVideos([]string{part1, "/not/authorised.mp4"}, false); err == nil {
+		t.Fatal("MergeVideos accepted an unauthorised file")
+	}
+	if _, err := app.MergeVideos([]string{part1, incompatible}, false); err == nil || err.Error() != app.tr("error.mergeIncompatible") {
+		t.Fatalf("MergeVideos(incompatible) = %v, want %q", err, app.tr("error.mergeIncompatible"))
+	}
+
+	kept, err := app.MergeVideos([]string{part1, part2}, false)
+	if err != nil {
+		t.Fatalf("MergeVideos(keep originals) failed: %v", err)
+	}
+	if kept.Deleted {
+		t.Fatal("MergeVideos(keep originals) marked sources deleted")
+	}
+	if kept.Item.Name != "clip1_merged.mp4" {
+		t.Fatalf("merged name = %q, want clip1_merged.mp4", kept.Item.Name)
+	}
+	if _, err := os.Stat(part1); err != nil {
+		t.Fatalf("part1 missing after non-destructive merge: %v", err)
+	}
+	if _, err := os.Stat(part2); err != nil {
+		t.Fatalf("part2 missing after non-destructive merge: %v", err)
+	}
+	dur, err := mediaDuration(kept.Item.Path, defaultLocale)
+	if err != nil {
+		t.Fatalf("probe merged output: %v", err)
+	}
+	if dur < 2.1 || dur > 2.7 {
+		t.Fatalf("merged duration = %v, want ~2.4s", dur)
+	}
+
+	var deleted []string
+	trashed, err := mergeVideosWithDelete([]string{part1, part2}, defaultLocale, func(p string) error {
+		deleted = append(deleted, p)
+		return os.Remove(p)
+	})
+	if err != nil {
+		t.Fatalf("mergeVideosWithDelete failed: %v", err)
+	}
+	if !trashed.Deleted || len(deleted) != 2 {
+		t.Fatalf("deleted = %v (Deleted=%v), want 2 removed originals", deleted, trashed.Deleted)
+	}
+	if gotName := filepath.Base(trashed.Item.Path); gotName != "clip1_merged_2.mp4" {
+		t.Fatalf("second merged name = %q, want clip1_merged_2.mp4", gotName)
+	}
+}

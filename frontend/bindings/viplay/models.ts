@@ -169,6 +169,35 @@ export class MediaItem {
     }
 }
 
+export class MergeResult {
+    "item": MediaItem;
+    "deleted": boolean;
+
+    /** Creates a new MergeResult instance. */
+    constructor($$source: Partial<MergeResult> = {}) {
+        if (!("item" in $$source)) {
+            this["item"] = (new MediaItem());
+        }
+        if (!("deleted" in $$source)) {
+            this["deleted"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new MergeResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): MergeResult {
+        const $$createField0_0 = $$createType3;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("item" in $$parsedSource) {
+            $$parsedSource["item"] = $$createField0_0($$parsedSource["item"]);
+        }
+        return new MergeResult($$parsedSource as Partial<MergeResult>);
+    }
+}
+
 export class MultiSplitResult {
     "paths": string[];
     "splitTimes": number[];
@@ -189,8 +218,8 @@ export class MultiSplitResult {
      * Creates a new MultiSplitResult instance from a string or object.
      */
     static createFrom($$source: any = {}): MultiSplitResult {
-        const $$createField0_0 = $$createType3;
-        const $$createField1_0 = $$createType4;
+        const $$createField0_0 = $$createType4;
+        const $$createField1_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("paths" in $$parsedSource) {
             $$parsedSource["paths"] = $$createField0_0($$parsedSource["paths"]);
@@ -267,7 +296,7 @@ export class ThumbnailProgress {
      * Creates a new ThumbnailProgress instance from a string or object.
      */
     static createFrom($$source: any = {}): ThumbnailProgress {
-        const $$createField5_0 = $$createType3;
+        const $$createField5_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("completedPaths" in $$parsedSource) {
             $$parsedSource["completedPaths"] = $$createField5_0($$parsedSource["completedPaths"]);
@@ -398,7 +427,7 @@ export class TranscodeResult {
      * Creates a new TranscodeResult instance from a string or object.
      */
     static createFrom($$source: any = {}): TranscodeResult {
-        const $$createField0_0 = $$createType5;
+        const $$createField0_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("item" in $$parsedSource) {
             $$parsedSource["item"] = $$createField0_0($$parsedSource["item"]);
@@ -411,6 +440,6 @@ export class TranscodeResult {
 const $$createType0 = LocaleOption.createFrom;
 const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $Create.Map($Create.Any, $Create.Any);
-const $$createType3 = $Create.Array($Create.Any);
+const $$createType3 = MediaItem.createFrom;
 const $$createType4 = $Create.Array($Create.Any);
-const $$createType5 = MediaItem.createFrom;
+const $$createType5 = $Create.Array($Create.Any);

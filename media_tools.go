@@ -193,6 +193,135 @@ func normaliseSplitMarkers(points []float64, duration float64, locale string) ([
 	return markers, nil
 }
 
+type mergeStreamSignature struct {
+	ext        string
+	videoCodec string
+	audioCodec string
+	width      int
+	height     int
+	duration   float64
+}
+
+func probeMergeSignature(path, locale string) (mergeStreamSignature, error) {
+	probe, err := probeWithFFprobe(path, locale)
+	if err != nil {
+		return mergeStreamSignature{}, err
+	}
+	sig := mergeStreamSignature{
+		ext:      strings.ToLower(filepath.Ext(path)),
+		duration: probeDuration(probe),
+	}
+	for _, stream := range probe.Streams {
+		switch {
+		case stream.CodecType == "video" && sig.videoCodec == "":
+			sig.videoCodec = strings.ToLower(stream.CodecName)
+			sig.width = stream.Width
+			sig.height = stream.Height
+		case stream.CodecType == "audio" && sig.audioCodec == "":
+			sig.audioCodec = strings.ToLower(stream.CodecName)
+		}
+	}
+	if sig.videoCodec == "" || sig.duration <= 0 {
+		return mergeStreamSignature{}, fmt.Errorf("%s", translate(locale, "error.videoTrackMissing"))
+	}
+	return sig, nil
+}
+
+func formatConcatDemuxerList(paths []string) string {
+	var b strings.Builder
+	b.WriteString("ffconcat version 1.0\n")
+	for _, p := range paths {
+		escaped := strings.ReplaceAll(p, "'", `'\''`)
+		b.WriteString("file '")
+		b.WriteString(escaped)
+		b.WriteString("'\n")
+	}
+	return b.String()
+}
+
+func mergeVideosWithDelete(paths []string, locale string, removeOriginal func(string) error) (MergeResult, error) {
+	if len(paths) < 2 {
+		return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.mergeMinCount"))
+	}
+	ffmpeg, err := requireMediaTool("ffmpeg", locale)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	var firstSig mergeStreamSignature
+	var totalDuration float64
+	for i, path := range paths {
+		sig, sigErr := probeMergeSignature(path, locale)
+		if sigErr != nil {
+			return MergeResult{}, sigErr
+		}
+		if i == 0 {
+			firstSig = sig
+		} else if sig.ext != firstSig.ext ||
+			sig.videoCodec != firstSig.videoCodec ||
+			sig.width != firstSig.width ||
+			sig.height != firstSig.height ||
+			sig.audioCodec != firstSig.audioCodec {
+			return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.mergeIncompatible"))
+		}
+		totalDuration += sig.duration
+	}
+
+	firstPath := paths[0]
+	dir := filepath.Dir(firstPath)
+	ext := firstSig.ext
+	if ext == "" {
+		ext = ".mp4"
+	}
+	base := strings.TrimSuffix(firstPath, filepath.Ext(firstPath)) + "_merged"
+	outputPath := availableOutput(base, ext)
+
+	tempDir, err := os.MkdirTemp(dir, ".viplay-merge-")
+	if err != nil {
+		return MergeResult{}, err
+	}
+	defer os.RemoveAll(tempDir)
+
+	listPath := filepath.Join(tempDir, "concat.txt")
+	if err := os.WriteFile(listPath, []byte(formatConcatDemuxerList(paths)), 0o600); err != nil {
+		return MergeResult{}, err
+	}
+	tempOutput := filepath.Join(tempDir, "merged"+ext)
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-f", "concat", "-safe", "0",
+		"-i", listPath,
+		"-map", "0:v:0", "-map", "0:a?", "-map", "0:s?",
+		"-c", "copy",
+	}
+	if ext == ".mp4" || ext == ".m4v" || ext == ".mov" {
+		args = append(args, "-movflags", "+faststart")
+	}
+	args = append(args, tempOutput)
+
+	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+		return MergeResult{}, mediaToolError(translate(locale, "error.mergeFailed"), runErr, output)
+	}
+	outInfo, err := os.Stat(tempOutput)
+	if err != nil || outInfo.Size() == 0 {
+		return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.mergeFailed"))
+	}
+	if outDuration, durErr := mediaDuration(tempOutput, locale); durErr != nil || outDuration <= 0 || math.Abs(outDuration-totalDuration) > math.Max(3, totalDuration*0.05) {
+		return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.mergeFailed"))
+	}
+	if err := os.Rename(tempOutput, outputPath); err != nil {
+		return MergeResult{}, err
+	}
+	if removeOriginal != nil {
+		for _, src := range paths {
+			_ = removeOriginal(src)
+		}
+	}
+	return MergeResult{
+		Item:    MediaItem{Path: outputPath},
+		Deleted: removeOriginal != nil,
+	}, nil
+}
+
 type ffprobeResult struct {
 	Format struct {
 		Duration string `json:"duration"`

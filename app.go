@@ -63,6 +63,11 @@ type TranscodeResult struct {
 	Deleted      bool      `json:"deleted"`
 }
 
+type MergeResult struct {
+	Item    MediaItem `json:"item"`
+	Deleted bool      `json:"deleted"`
+}
+
 type App struct {
 	application *application.App
 	server      *mediaServer
@@ -395,6 +400,58 @@ func (a *App) TranscodeStatus() TranscodeProgress {
 
 func (a *App) CancelTranscode() {
 	a.transcode.cancel()
+}
+
+func (a *App) MergeVideos(paths []string, trashOriginals bool) (MergeResult, error) {
+	if len(paths) < 2 {
+		return MergeResult{}, errors.New(a.tr("error.mergeMinCount"))
+	}
+	seen := make(map[string]struct{}, len(paths))
+	cleaned := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if !a.server.isAllowed(path) {
+			return MergeResult{}, errors.New(a.tr("error.unauthorised"))
+		}
+		if a.transcode.isEncoding(path) {
+			return MergeResult{}, errors.New(a.tr("delete.encodingBusy"))
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			abs = path
+		}
+		if _, dup := seen[abs]; dup {
+			continue
+		}
+		seen[abs] = struct{}{}
+		cleaned = append(cleaned, abs)
+	}
+	if len(cleaned) < 2 {
+		return MergeResult{}, errors.New(a.tr("error.mergeMinCount"))
+	}
+	var removeFn func(string) error
+	if trashOriginals {
+		removeFn = deleteFile
+	}
+	result, err := mergeVideosWithDelete(cleaned, a.locale.get(), removeFn)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	if trashOriginals {
+		for i, src := range cleaned {
+			_ = removeThumbnailFor(src)
+			a.server.disallow(src)
+			if i == 0 {
+				a.recent.replace(src, result.Item.Path)
+			} else {
+				a.recent.remove(src)
+			}
+		}
+	} else {
+		a.recent.add(result.Item.Path)
+	}
+	result.Item = a.mediaItem(result.Item.Path)
+	result.Deleted = trashOriginals
+	return result, nil
 }
 
 func isSupportedMedia(name string) bool {

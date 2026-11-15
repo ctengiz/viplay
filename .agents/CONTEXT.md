@@ -51,6 +51,7 @@
 - The selected locale is saved in local storage, while catalogs remain embedded only in the Go binary.
 - Unknown locale codes fall back to English.
 - Split does not re-encode; `ffprobe` measures the actual split time from the first part.
+- Merge combines two or more compatible videos losslessly via FFmpeg's concat demuxer (`-f concat -safe 0 -c copy`) in the order selected in the playlist drawer, writing `<first>_merged<ext>` and optionally trashing originals.
 - Contact sheets distribute frames evenly into a four-column JPEG grid.
 - Re-encoding recommends available HEVC/AV1 software encoders, writes Matroska, validates codec/duration/size, then removes the source.
 - Playlist thumbnails are generated sequentially with progress, cooperative pause/stop controls, and user-triggered cache cleanup.

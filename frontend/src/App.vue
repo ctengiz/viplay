@@ -1,8 +1,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertCircle, ArrowUpDown, Captions, CheckCircle2, ChevronDown, ChevronRight, Copy, Film, Flag, FolderOpen, Gauge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
+import { AlertCircle, ArrowUpDown, Captions, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Copy, Film, Flag, FolderOpen, Gauge, GitMerge, Images, Keyboard, Languages, ListVideo, LoaderCircle, Maximize, Minimize, Pause, Play, RefreshCw, RotateCcw, RotateCw, Scissors, SkipBack, SkipForward, Speaker, Trash2, Volume2, VolumeX, X } from '@lucide/vue'
 import { Clipboard, Events, Window } from '@wailsio/runtime'
-import { CancelTranscode, ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, MediaDurations, OpenDroppedFiles, OpenSubtitle, OpenSubtitlePath, OpenVideos, PauseThumbnailGeneration, PendingSystemFiles, PlayerEngine, PreparePlayback, PreparePlaybackForce, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, RevealInFolder, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeStatus, TranscodeVideo } from '../bindings/viplay/app'
+import { CancelTranscode, ClearThumbnailCache, DeleteVideo, DirectoryVideos, ExtractContactSheet, GenerateThumbnails, MarkPlayed, MediaDurations, MergeVideos, OpenDroppedFiles, OpenSubtitle, OpenSubtitlePath, OpenVideos, PauseThumbnailGeneration, PendingSystemFiles, PlayerEngine, PreparePlayback, PreparePlaybackForce, ProbeMedia, RecentVideos, ResumeThumbnailGeneration, RevealInFolder, SplitVideo, SplitVideoAtMarkers, StopThumbnailGeneration, ThumbnailGenerationStatus, TranscodeOptions, TranscodeStatus, TranscodeVideo } from '../bindings/viplay/app'
 import { loadLocale, locale, locales, t } from './i18n'
 import { createNativePlayer } from './nativePlayer'
 
@@ -41,6 +41,13 @@ const transcodeTrashOriginal = ref(localStorage.getItem('viplay.transcode.trashO
 watch(transcodeTrashOriginal, val => {
   localStorage.setItem('viplay.transcode.trashOriginal', String(val))
 })
+const mergeMode = ref(false)
+const mergePaths = ref([])
+const mergeProbes = ref({})
+const mergeTrashOriginals = ref(localStorage.getItem('viplay.merge.trashOriginals') === 'true')
+watch(mergeTrashOriginals, val => {
+  localStorage.setItem('viplay.merge.trashOriginals', String(val))
+})
 const emptyTranscodeProgress = () => ({ active: false, path: '', name: '', codec: '', stage: '', percent: 0, speed: '', fps: 0, currentTime: 0, totalTime: 0 })
 const transcodeProgress = ref(emptyTranscodeProgress())
 let transcodePollTimer = null
@@ -76,6 +83,7 @@ let autoplayOnReady = false
 let pausedForPlayback = false
 const item = computed(() => queue.value[index.value])
 const hasVideos = computed(() => queue.value.some(entry => entry.kind === 'video'))
+const videoCount = computed(() => queue.value.filter(entry => entry.kind === 'video').length)
 const progress = computed(() => `${duration.value ? current.value / duration.value * 100 : 0}%`)
 const markerPositions = computed(() => splitMarkers.value.map(seconds => ({ seconds, left: `${seconds / duration.value * 100}%` })))
 const volumeProgress = computed(() => `${volume.value * 100}%`)
@@ -736,12 +744,172 @@ async function clearThumbnails() {
   } catch (error) { notify('error', t('thumbnails.clearErrorTitle'), String(error)) }
 }
 
+function fileExtLower(path) {
+  const dot = path.lastIndexOf('.')
+  return dot >= 0 ? path.slice(dot).toLowerCase() : ''
+}
+
+function mergeOrder(path) {
+  return mergePaths.value.indexOf(path) + 1
+}
+
+function ensureMergeProbe(path) {
+  if (!path || mergeProbes.value[path]) return
+  ProbeMedia(path)
+    .then(info => {
+      if (!info) return
+      if (info.duration > 0) durations.value[path] = info.duration
+      mergeProbes.value = { ...mergeProbes.value, [path]: info }
+    })
+    .catch(() => {})
+}
+
+function isMergeCompatible(entry) {
+  if (!entry || entry.kind !== 'video' || isEncodingPath(entry.path)) return false
+  if (!mergePaths.value.length || mergePaths.value[0] === entry.path) return true
+  const basePath = mergePaths.value[0]
+  if (fileExtLower(entry.path) !== fileExtLower(basePath)) return false
+  const baseInfo = mergeProbes.value[basePath]
+  const candInfo = mergeProbes.value[entry.path]
+  if (baseInfo?.probeAvailable && candInfo?.probeAvailable) {
+    if ((baseInfo.videoCodec || '').toLowerCase() !== (candInfo.videoCodec || '').toLowerCase()) return false
+    if ((baseInfo.width || 0) !== (candInfo.width || 0) || (baseInfo.height || 0) !== (candInfo.height || 0)) return false
+    if ((baseInfo.audioCodec || '').toLowerCase() !== (candInfo.audioCodec || '').toLowerCase()) return false
+  }
+  return true
+}
+
+const mergeSummary = computed(() => {
+  let totalDuration = 0
+  let totalSize = 0
+  for (const path of mergePaths.value) {
+    totalDuration += durations.value[path] || 0
+    const entry = queue.value.find(item => item.path === path)
+    if (entry?.size) totalSize += entry.size
+  }
+  return { totalDuration, totalSize }
+})
+
+function toggleMergeMode(initialPath = '') {
+  if (initialPath) {
+    showQueue.value = true
+    const entry = queue.value.find(item => item.path === initialPath)
+    if (!entry || entry.kind !== 'video' || isEncodingPath(entry.path)) return
+    if (!mergeMode.value) {
+      mergeMode.value = true
+      mergePaths.value = [initialPath]
+      ensureMergeProbe(initialPath)
+    } else if (!mergePaths.value.includes(initialPath)) {
+      toggleMergeItem(entry)
+    }
+    return
+  }
+  if (mergeMode.value) {
+    cancelMergeMode()
+    return
+  }
+  mergeMode.value = true
+  mergePaths.value = []
+}
+
+function cancelMergeMode() {
+  mergeMode.value = false
+  mergePaths.value = []
+}
+
+function toggleMergeItem(entry) {
+  if (!entry) return
+  const existing = mergePaths.value.indexOf(entry.path)
+  if (existing >= 0) {
+    mergePaths.value.splice(existing, 1)
+    return
+  }
+  if (!isMergeCompatible(entry)) {
+    notify('error', t('merge.errorTitle'), t('merge.incompatible'))
+    return
+  }
+  mergePaths.value.push(entry.path)
+  ensureMergeProbe(entry.path)
+  for (const peer of queue.value) {
+    if (peer.kind === 'video' && fileExtLower(peer.path) === fileExtLower(entry.path)) {
+      ensureMergeProbe(peer.path)
+    }
+  }
+}
+
+function moveMergeItem(path, delta) {
+  const idx = mergePaths.value.indexOf(path)
+  const target = idx + delta
+  if (idx < 0 || target < 0 || target >= mergePaths.value.length) return
+  const copy = [...mergePaths.value]
+  const [moved] = copy.splice(idx, 1)
+  copy.splice(target, 0, moved)
+  mergePaths.value = copy
+}
+
+async function runMerge() {
+  if (mergePaths.value.length < 2 || processing.value) return
+  const selected = [...mergePaths.value]
+  const shouldTrash = mergeTrashOriginals.value
+  const activePath = item.value?.path
+  const activeSelected = activePath && selected.includes(activePath)
+  const wasPlaying = playing.value || !!(video.value && !video.value.paused)
+  if (shouldTrash && activeSelected && video.value && !video.value.paused) {
+    video.value.pause()
+  }
+  processing.value = 'merge'
+  notify('progress', t('merge.progressTitle'), t('merge.progress', { count: selected.length }))
+  await nextTick()
+  try {
+    const result = await MergeVideos(selected, shouldTrash)
+    const firstIndex = queue.value.findIndex(entry => entry.path === selected[0])
+    if (result.deleted) {
+      const selectedSet = new Set(selected)
+      for (const path of selected) {
+        forgetDeletedThumbnail(path)
+        if (lastMarkedPath === path) lastMarkedPath = ''
+        delete durations.value[path]
+      }
+      const insertAt = firstIndex >= 0
+        ? queue.value.slice(0, firstIndex).filter(entry => !selectedSet.has(entry.path)).length
+        : queue.value.filter(entry => !selectedSet.has(entry.path)).length
+      const remaining = queue.value.filter(entry => !selectedSet.has(entry.path))
+      remaining.splice(insertAt, 0, result.item)
+      queue.value = libraryView.value === 'folder' ? sortItems(remaining) : remaining
+      if (activeSelected) {
+        autoplayOnReady = wasPlaying
+        current.value = 0
+        playing.value = false
+        playbackURL.value = ''
+        subtitle.value = null
+        index.value = Math.max(0, queue.value.findIndex(entry => entry.path === result.item.path))
+      } else if (activePath) {
+        index.value = Math.max(0, queue.value.findIndex(entry => entry.path === activePath))
+      }
+      notify('success', t('merge.successTitle'), t('merge.success', { count: selected.length, name: result.item.name }))
+    } else {
+      const nextQueue = [...queue.value]
+      if (firstIndex >= 0) nextQueue.splice(firstIndex + 1, 0, result.item)
+      else nextQueue.push(result.item)
+      queue.value = libraryView.value === 'folder' ? sortItems(nextQueue) : nextQueue
+      if (activePath) index.value = Math.max(0, queue.value.findIndex(entry => entry.path === activePath))
+      notify('success', t('merge.successTitle'), t('merge.successKept', { count: selected.length, name: result.item.name }))
+    }
+    cancelMergeMode()
+  } catch (error) {
+    notify('error', t('merge.errorTitle'), String(error))
+  } finally {
+    processing.value = ''
+  }
+}
+
 // Actions from the native playlist row menu (built in playlist_menu.go).
 async function handlePlaylistAction(action, path) {
   const entryIndex = queue.value.findIndex(entry => entry.path === path)
   if (entryIndex < 0) return
   const entry = queue.value[entryIndex]
   if (action === 'play') select(entryIndex, true)
+  else if (action === 'merge') toggleMergeMode(entry.path)
   else if (action === 'reveal') RevealInFolder(path).catch(error => notify('error', t('playlistMenu.revealErrorTitle'), String(error)))
   else if (action === 'copy') copyPath(path)
   else if (action === 'delete') requestDelete(entry)
@@ -840,6 +1008,7 @@ async function confirmDelete() {
     forgetDeletedThumbnail(deleting.path)
     if (lastMarkedPath === deleting.path) lastMarkedPath = ''
     delete durations.value[deleting.path]
+    mergePaths.value = mergePaths.value.filter(p => p !== deleting.path)
     const currentIndex = index.value
     const hasNext = queue.value.length > 1
     const nextIndex = currentIndex >= queue.value.length - 1 ? Math.max(0, queue.value.length - 2) : currentIndex
@@ -867,6 +1036,7 @@ async function deleteOtherRow(deleting) {
     forgetDeletedThumbnail(deleting.path)
     if (lastMarkedPath === deleting.path) lastMarkedPath = ''
     delete durations.value[deleting.path]
+    mergePaths.value = mergePaths.value.filter(p => p !== deleting.path)
     const playingPath = item.value?.path
     queue.value = queue.value.filter(entry => entry.path !== deleting.path)
     index.value = Math.max(0, queue.value.findIndex(entry => entry.path === playingPath))
@@ -889,6 +1059,7 @@ function onKey(event) {
   if (!event.repeat && event.key === 'Enter' && showDeleteDialog.value) { event.preventDefault(); confirmDelete(); return }
   if (event.key === 'Escape' && showSheetDialog.value) { showSheetDialog.value = false; return }
   if (event.key === 'Escape' && showShortcuts.value) { showShortcuts.value = false; return }
+  if (event.key === 'Escape' && mergeMode.value) { cancelMergeMode(); return }
   if (showDeleteDialog.value || showTranscodeDialog.value || showShortcuts.value) return
   if (event.key === 'Escape' && fullscreenActive.value) { fullscreen(); return }
   if (['INPUT', 'BUTTON'].includes(document.activeElement?.tagName) && event.code === 'Space') return
@@ -928,6 +1099,10 @@ watch(playing, isPlaying => {
 watch([() => queue.value.map(entry => entry.path).join('\n'), showQueue], () => nextTick(observeQueueRows))
 watch(() => item.value?.path, () => nextTick(scrollToCurrent))
 watch(() => queue.value.map(entry => entry.path).join('\n'), (newPathsStr, oldPathsStr) => {
+  if (mergePaths.value.length) {
+    const validSet = new Set(queue.value.map(entry => entry.path))
+    mergePaths.value = mergePaths.value.filter(path => validSet.has(path))
+  }
   if (!newPathsStr) return
   if (oldPathsStr) {
     const oldSet = new Set(oldPathsStr.split('\n'))
@@ -1208,6 +1383,7 @@ onBeforeUnmount(() => {
         <strong>{{ t('queue.playlist') }}<span v-if="queue.length">{{ queue.length }}</span></strong>
         <div>
           <label v-if="libraryView === 'folder' && queue.length > 1" class="queue-sort" :title="t('queue.sortBy')"><ArrowUpDown :size="14" /><select v-model="sortMode" :aria-label="t('queue.sortBy')"><option value="name">{{ t('queue.sortName') }}</option><option value="modified">{{ t('queue.sortModified') }}</option><option value="duration">{{ t('queue.sortDuration') }}</option></select></label>
+          <button v-if="videoCount > 1" class="icon-btn small" :class="{ active: mergeMode }" :aria-label="t('merge.toggle')" :title="t('merge.toggle')" @click="toggleMergeMode()"><GitMerge :size="15" /></button>
           <button v-if="hasVideos" class="icon-btn small" :aria-label="t('thumbnails.clear')" :title="t('thumbnails.clear')" @click="clearThumbnails"><Trash2 :size="15" /></button>
           <button class="icon-btn" :aria-label="t('queue.close')" :title="t('queue.close')" @click="showQueue = false"><X :size="20" /></button>
         </div>
@@ -1245,13 +1421,37 @@ onBeforeUnmount(() => {
       </div>
       <div ref="queueList" class="queue-list">
         <template v-if="queue.length">
-          <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: i === index, encoding: isEncodingPath(entry.path) }" :data-path="entry.path" :style="{ '--custom-contextmenu': 'playlist-item', '--custom-contextmenu-data': encodeURIComponent(entry.path) }" @click="select(i, true)">
-            <span class="queue-number"><Speaker v-if="i === index" :size="15" /><template v-else>{{ String(i + 1).padStart(2, '0') }}</template></span>
+          <button v-for="(entry, i) in queue" :key="entry.path" class="queue-item" :class="{ current: !mergeMode && i === index, encoding: isEncodingPath(entry.path), 'merge-selected': mergeMode && mergeOrder(entry.path) > 0, 'merge-disabled': mergeMode && !isMergeCompatible(entry) }" :data-path="entry.path" :title="mergeMode && !isMergeCompatible(entry) ? t('merge.incompatible') : ''" :style="{ '--custom-contextmenu': 'playlist-item', '--custom-contextmenu-data': encodeURIComponent(entry.path) }" @click="mergeMode ? toggleMergeItem(entry) : select(i, true)">
+            <span class="queue-number"><span v-if="mergeMode && mergeOrder(entry.path)" class="merge-badge">{{ mergeOrder(entry.path) }}</span><span v-else-if="mergeMode" class="merge-slot" /><Speaker v-else-if="i === index" :size="15" /><template v-else>{{ String(i + 1).padStart(2, '0') }}</template></span>
             <span class="thumb"><img v-if="entry.kind === 'video' && thumbnailReady[entry.path]" :src="`${entry.thumbnailUrl}&v=${thumbnailRevision}`" alt="" loading="lazy" @error="$event.currentTarget.style.display = 'none'"><LoaderCircle v-else-if="entry.kind === 'video' && thumbnailProgress.active && thumbnailProgress.current === entry.name" class="spin" :size="18" /><Film v-else :size="22" /><i v-if="i === index && playing"><span /><span /><span /></i></span>
-            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ [fileType(entry.name), durations[entry.path] ? fmt(durations[entry.path]) : '', fileSize(entry.size)].filter(Boolean).join(' · ') }}</small></span><LoaderCircle v-if="isEncodingPath(entry.path)" class="spin queue-encoding-icon" :size="15" /><ChevronRight v-else :size="16" />
+            <span class="queue-copy"><strong>{{ title(entry.name) }}</strong><small>{{ [fileType(entry.name), durations[entry.path] ? fmt(durations[entry.path]) : '', fileSize(entry.size), mergeMode && !isMergeCompatible(entry) ? t('merge.incompatible') : ''].filter(Boolean).join(' · ') }}</small></span>
+            <span v-if="mergeMode && mergeOrder(entry.path) > 0" class="merge-order-btns" @click.stop>
+              <button :disabled="mergeOrder(entry.path) === 1" :aria-label="t('merge.moveUp')" :title="t('merge.moveUp')" @click.stop="moveMergeItem(entry.path, -1)"><ChevronUp :size="13" /></button>
+              <button :disabled="mergeOrder(entry.path) === mergePaths.length" :aria-label="t('merge.moveDown')" :title="t('merge.moveDown')" @click.stop="moveMergeItem(entry.path, 1)"><ChevronDown :size="13" /></button>
+            </span>
+            <LoaderCircle v-else-if="isEncodingPath(entry.path)" class="spin queue-encoding-icon" :size="15" />
+            <ChevronRight v-else :size="16" />
           </button>
         </template>
         <div v-else class="queue-empty"><ListVideo :size="28" /><p>{{ t('queue.empty') }}</p><button @click="openVideos">{{ t('queue.addVideo') }}</button></div>
+      </div>
+      <div v-if="mergeMode" class="queue-merge-bar">
+        <div class="queue-merge-summary">
+          <strong>{{ mergePaths.length ? t('merge.selectedCount', { count: mergePaths.length }) : t('merge.hint') }}</strong>
+          <small v-if="mergePaths.length">{{ [mergeSummary.totalDuration ? fmt(mergeSummary.totalDuration) : '', mergeSummary.totalSize ? fileSize(mergeSummary.totalSize) : ''].filter(Boolean).join(' · ') }}</small>
+        </div>
+        <label class="queue-merge-trash">
+          <input v-model="mergeTrashOriginals" type="checkbox">
+          <span>{{ t('merge.trashOriginals') }}</span>
+        </label>
+        <div class="queue-merge-actions">
+          <button class="cancel" :disabled="processing === 'merge'" @click="cancelMergeMode">{{ t('merge.cancel') }}</button>
+          <button class="confirm" :disabled="mergePaths.length < 2 || !!processing" @click="runMerge">
+            <LoaderCircle v-if="processing === 'merge'" class="spin" :size="15" />
+            <GitMerge v-else :size="15" />
+            <span>{{ t('merge.confirm', { count: Math.max(2, mergePaths.length) }) }}</span>
+          </button>
+        </div>
       </div>
     </aside>
 

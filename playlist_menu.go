@@ -23,6 +23,7 @@ func (a *App) buildPlaylistMenu() {
 		})
 	}
 	add("playlistMenu.play", "play")
+	add("playlistMenu.merge", "merge")
 	if runtime.GOOS == "darwin" {
 		add("playlistMenu.revealFinder", "reveal")
 	} else {
