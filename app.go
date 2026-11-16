@@ -16,13 +16,15 @@ import (
 var mediaInfoCache sync.Map
 
 type MediaItem struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`
-	URL          string `json:"url"`
-	ThumbnailURL string `json:"thumbnailUrl"`
-	Kind         string `json:"kind"`
-	Size         int64  `json:"size"`
-	ModTime      int64  `json:"modTime"`
+	Name           string  `json:"name"`
+	Path           string  `json:"path"`
+	URL            string  `json:"url"`
+	ThumbnailURL   string  `json:"thumbnailUrl"`
+	ThumbnailReady bool    `json:"thumbnailReady,omitempty"`
+	Duration       float64 `json:"duration,omitempty"`
+	Kind           string  `json:"kind"`
+	Size           int64   `json:"size"`
+	ModTime        int64   `json:"modTime"`
 }
 
 type MediaInfo struct {
@@ -74,6 +76,7 @@ type App struct {
 	recent      *recentStore
 	thumbnails  *thumbnailManager
 	transcode   *transcodeManager
+	jobs        *jobManager
 	player      *nativePlayer
 	window      *application.WebviewWindow
 	systemOpen  systemOpenQueue
@@ -81,11 +84,16 @@ type App struct {
 }
 
 func NewApp(server *mediaServer) *App {
-	app := &App{server: server, recent: newRecentStore(), thumbnails: newThumbnailManager(), transcode: newTranscodeManager()}
+	app := &App{server: server, recent: newRecentStore(), thumbnails: newThumbnailManager(), transcode: newTranscodeManager(), jobs: newJobManager()}
 	app.locale.set(defaultLocale)
 	app.transcode.setObserver(func(status TranscodeProgress) {
 		if app.application != nil {
 			app.application.Event.Emit("transcode:progress", status)
+		}
+	})
+	app.jobs.setObserver(func(jobs []MediaJob) {
+		if app.application != nil {
+			app.application.Event.Emit("jobs:progress", jobs)
 		}
 	})
 	return app
@@ -113,6 +121,13 @@ func (a *App) mediaItemWithInfo(path string, info os.FileInfo) MediaItem {
 	}
 	if info != nil {
 		item.Size, item.ModTime = info.Size(), info.ModTime().UnixMilli()
+		if item.Kind == "video" && hasCachedThumbnailInfo(abs, info) {
+			item.ThumbnailReady = true
+		}
+		key := fmt.Sprintf("%s:%d:%d", abs, info.Size(), info.ModTime().UnixNano())
+		if cachedDur, ok := durationCache.Load(key); ok {
+			item.Duration = cachedDur.(float64)
+		}
 	}
 	return item
 }
@@ -218,6 +233,9 @@ func (a *App) DeleteVideo(path string) error {
 	if a.transcode.isEncoding(path) {
 		return errors.New(a.tr("delete.encodingBusy"))
 	}
+	if a.jobs.isBusy(path) {
+		return errors.New(a.tr("error.fileBusy"))
+	}
 	_ = removeThumbnailFor(path)
 	if err := deleteFile(path); err != nil {
 		return err
@@ -295,7 +313,7 @@ func (a *App) RecentVideos() ([]MediaItem, error) {
 	items := make([]MediaItem, 0, len(paths))
 	for _, path := range paths {
 		if stat, statErr := os.Stat(path); statErr == nil && !stat.IsDir() && isSupportedMedia(path) {
-			items = append(items, a.mediaItem(path))
+			items = append(items, a.mediaItemWithInfo(path, stat))
 		}
 	}
 	return items, nil
@@ -305,19 +323,41 @@ func (a *App) SplitVideo(path string, seconds float64) (SplitResult, error) {
 	if !a.server.isAllowed(path) {
 		return SplitResult{}, errors.New(a.tr("error.unauthorised"))
 	}
-	return splitMP4(path, seconds, a.locale.get())
+	if a.transcode.isEncoding(path) || a.jobs.isBusy(path) {
+		return SplitResult{}, errors.New(a.tr("error.fileBusy"))
+	}
+	result, err := splitMP4WithJobs(path, seconds, a.locale.get(), a.jobs)
+	if err != nil {
+		return SplitResult{}, err
+	}
+	a.server.allow(result.FirstPath)
+	a.server.allow(result.SecondPath)
+	return result, nil
 }
 
 func (a *App) SplitVideoAtMarkers(path string, seconds []float64) (MultiSplitResult, error) {
 	if !a.server.isAllowed(path) {
 		return MultiSplitResult{}, errors.New(a.tr("error.unauthorised"))
 	}
-	return splitMP4AtMarkers(path, seconds, a.locale.get())
+	if a.transcode.isEncoding(path) || a.jobs.isBusy(path) {
+		return MultiSplitResult{}, errors.New(a.tr("error.fileBusy"))
+	}
+	result, err := splitMP4AtMarkersWithJobs(path, seconds, a.locale.get(), a.jobs)
+	if err != nil {
+		return MultiSplitResult{}, err
+	}
+	for _, outPath := range result.Paths {
+		a.server.allow(outPath)
+	}
+	return result, nil
 }
 
 func (a *App) ExtractContactSheet(path string, frameCount int, imageWidth int) (string, error) {
 	if !a.server.isAllowed(path) {
 		return "", errors.New(a.tr("error.unauthorised"))
+	}
+	if a.transcode.isEncoding(path) || a.jobs.isBusy(path) {
+		return "", errors.New(a.tr("error.fileBusy"))
 	}
 	return extractContactSheet(path, frameCount, imageWidth, 4, a.locale.get())
 }
@@ -332,9 +372,9 @@ func (a *App) GenerateThumbnails(paths []string) error {
 			videoPaths = append(videoPaths, path)
 		}
 	}
-	a.thumbnails.run(videoPaths, func(path string) error {
-		_, err := thumbnailFor(path)
-		return err
+	a.thumbnails.run(videoPaths, func(path string) (bool, error) {
+		_, cached, err := ensureThumbnailCached(path)
+		return cached, err
 	})
 	return nil
 }
@@ -364,12 +404,18 @@ func (a *App) TranscodeOptions(path string) ([]TranscodeOption, error) {
 	if !a.server.isAllowed(path) {
 		return nil, errors.New(a.tr("error.unauthorised"))
 	}
+	if a.transcode.isEncoding(path) || a.jobs.isBusy(path) {
+		return nil, errors.New(a.tr("error.fileBusy"))
+	}
 	return transcodeOptions(path, a.locale.get())
 }
 
 func (a *App) TranscodeVideo(path string, optionID string, trashOriginal bool) (TranscodeResult, error) {
 	if !a.server.isAllowed(path) {
 		return TranscodeResult{}, errors.New(a.tr("error.unauthorised"))
+	}
+	if a.transcode.isEncoding(path) || a.jobs.isBusy(path) {
+		return TranscodeResult{}, errors.New(a.tr("error.fileBusy"))
 	}
 	if a.transcode.progress().Active {
 		return TranscodeResult{}, errors.New(a.tr("error.transcodeBusy"))
@@ -378,7 +424,7 @@ func (a *App) TranscodeVideo(path string, optionID string, trashOriginal bool) (
 	if trashOriginal {
 		removeFn = deleteFile
 	}
-	result, err := transcodeVideoWithManager(path, optionID, a.locale.get(), a.transcode, removeFn)
+	result, err := transcodeVideoWithJobs(path, optionID, a.locale.get(), a.transcode, a.jobs, removeFn)
 	if err != nil {
 		return TranscodeResult{}, err
 	}
@@ -399,7 +445,25 @@ func (a *App) TranscodeStatus() TranscodeProgress {
 }
 
 func (a *App) CancelTranscode() {
+	for _, job := range a.jobs.list() {
+		if job.Kind == "transcode" {
+			a.jobs.cancel(job.ID)
+		}
+	}
 	a.transcode.cancel()
+}
+
+func (a *App) ActiveJobs() []MediaJob {
+	return a.jobs.list()
+}
+
+func (a *App) CancelJob(id string) {
+	for _, job := range a.jobs.list() {
+		if job.ID == id && job.Kind == "transcode" {
+			a.transcode.cancel()
+		}
+	}
+	a.jobs.cancel(id)
 }
 
 func (a *App) MergeVideos(paths []string, trashOriginals bool) (MergeResult, error) {
@@ -412,8 +476,8 @@ func (a *App) MergeVideos(paths []string, trashOriginals bool) (MergeResult, err
 		if !a.server.isAllowed(path) {
 			return MergeResult{}, errors.New(a.tr("error.unauthorised"))
 		}
-		if a.transcode.isEncoding(path) {
-			return MergeResult{}, errors.New(a.tr("delete.encodingBusy"))
+		if a.transcode.isEncoding(path) || a.jobs.isBusy(path) {
+			return MergeResult{}, errors.New(a.tr("error.fileBusy"))
 		}
 		abs, err := filepath.Abs(path)
 		if err != nil {
@@ -432,7 +496,7 @@ func (a *App) MergeVideos(paths []string, trashOriginals bool) (MergeResult, err
 	if trashOriginals {
 		removeFn = deleteFile
 	}
-	result, err := mergeVideosWithDelete(cleaned, a.locale.get(), removeFn)
+	result, err := mergeVideosWithJobs(cleaned, a.locale.get(), a.jobs, removeFn)
 	if err != nil {
 		return MergeResult{}, err
 	}

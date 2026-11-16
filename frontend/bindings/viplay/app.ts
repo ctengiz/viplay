@@ -9,6 +9,16 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function ActiveJobs(): $CancellablePromise<$models.MediaJob[]> {
+    return $Call.ByID(2472238423).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
+export function CancelJob(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1182131210, id);
+}
+
 export function CancelTranscode(): $CancellablePromise<void> {
     return $Call.ByID(1345363006);
 }
@@ -23,7 +33,7 @@ export function DeleteVideo(path: string): $CancellablePromise<void> {
 
 export function DirectoryVideos(path: string): $CancellablePromise<$models.MediaItem[]> {
     return $Call.ByID(3847526080, path).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType3($result);
     });
 }
 
@@ -37,7 +47,7 @@ export function GenerateThumbnails(paths: string[]): $CancellablePromise<void> {
 
 export function GetLocalization(locale: string): $CancellablePromise<$models.LocalizationPayload> {
     return $Call.ByID(1859751638, locale).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType4($result);
     });
 }
 
@@ -50,37 +60,37 @@ export function MarkPlayed(path: string): $CancellablePromise<void> {
  */
 export function MediaDurations(paths: string[]): $CancellablePromise<{ [_ in string]?: number }> {
     return $Call.ByID(2125513636, paths).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType5($result);
     });
 }
 
 export function MergeVideos(paths: string[], trashOriginals: boolean): $CancellablePromise<$models.MergeResult> {
     return $Call.ByID(2087037363, paths, trashOriginals).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType6($result);
     });
 }
 
 export function OpenDroppedFiles(paths: string[]): $CancellablePromise<$models.MediaItem[]> {
     return $Call.ByID(2280095460, paths).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType3($result);
     });
 }
 
 export function OpenSubtitle(): $CancellablePromise<$models.MediaItem> {
     return $Call.ByID(614166045).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType2($result);
     });
 }
 
 export function OpenSubtitlePath(path: string): $CancellablePromise<$models.MediaItem> {
     return $Call.ByID(820438014, path).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType2($result);
     });
 }
 
 export function OpenVideos(): $CancellablePromise<$models.MediaItem[]> {
     return $Call.ByID(3007781241).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType3($result);
     });
 }
 
@@ -93,7 +103,7 @@ export function PauseThumbnailGeneration(): $CancellablePromise<void> {
  */
 export function PendingSystemFiles(): $CancellablePromise<string[]> {
     return $Call.ByID(2783365112).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -153,13 +163,13 @@ export function PreparePlaybackForce(path: string): $CancellablePromise<string> 
 
 export function ProbeMedia(path: string): $CancellablePromise<$models.MediaInfo> {
     return $Call.ByID(614641911, path).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType8($result);
     });
 }
 
 export function RecentVideos(): $CancellablePromise<$models.MediaItem[]> {
     return $Call.ByID(1995266018).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType3($result);
     });
 }
 
@@ -176,13 +186,13 @@ export function RevealInFolder(path: string): $CancellablePromise<void> {
 
 export function SplitVideo(path: string, seconds: number): $CancellablePromise<$models.SplitResult> {
     return $Call.ByID(2078186822, path, seconds).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
 export function SplitVideoAtMarkers(path: string, seconds: number[]): $CancellablePromise<$models.MultiSplitResult> {
     return $Call.ByID(1021854198, path, seconds).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -192,40 +202,42 @@ export function StopThumbnailGeneration(): $CancellablePromise<void> {
 
 export function ThumbnailGenerationStatus(): $CancellablePromise<$models.ThumbnailProgress> {
     return $Call.ByID(1427037375).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType11($result);
     });
 }
 
 export function TranscodeOptions(path: string): $CancellablePromise<$models.TranscodeOption[]> {
     return $Call.ByID(3683531566, path).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType13($result);
     });
 }
 
 export function TranscodeStatus(): $CancellablePromise<$models.TranscodeProgress> {
     return $Call.ByID(717926866).then(($result: any) => {
-        return $$createType12($result);
+        return $$createType14($result);
     });
 }
 
 export function TranscodeVideo(path: string, optionID: string, trashOriginal: boolean): $CancellablePromise<$models.TranscodeResult> {
     return $Call.ByID(2627797619, path, optionID, trashOriginal).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType15($result);
     });
 }
 
 // Private type creation functions
-const $$createType0 = $models.MediaItem.createFrom;
+const $$createType0 = $models.MediaJob.createFrom;
 const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.LocalizationPayload.createFrom;
-const $$createType3 = $Create.Map($Create.Any, $Create.Any);
-const $$createType4 = $models.MergeResult.createFrom;
-const $$createType5 = $Create.Array($Create.Any);
-const $$createType6 = $models.MediaInfo.createFrom;
-const $$createType7 = $models.SplitResult.createFrom;
-const $$createType8 = $models.MultiSplitResult.createFrom;
-const $$createType9 = $models.ThumbnailProgress.createFrom;
-const $$createType10 = $models.TranscodeOption.createFrom;
-const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = $models.TranscodeProgress.createFrom;
-const $$createType13 = $models.TranscodeResult.createFrom;
+const $$createType2 = $models.MediaItem.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = $models.LocalizationPayload.createFrom;
+const $$createType5 = $Create.Map($Create.Any, $Create.Any);
+const $$createType6 = $models.MergeResult.createFrom;
+const $$createType7 = $Create.Array($Create.Any);
+const $$createType8 = $models.MediaInfo.createFrom;
+const $$createType9 = $models.SplitResult.createFrom;
+const $$createType10 = $models.MultiSplitResult.createFrom;
+const $$createType11 = $models.ThumbnailProgress.createFrom;
+const $$createType12 = $models.TranscodeOption.createFrom;
+const $$createType13 = $Create.Array($$createType12);
+const $$createType14 = $models.TranscodeProgress.createFrom;
+const $$createType15 = $models.TranscodeResult.createFrom;

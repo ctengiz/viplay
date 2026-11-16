@@ -16,7 +16,8 @@
 - `main.go`: application startup and authorised local media server
 - `media_analysis.go`: MP4 analysis, thumbnails, and recent-store logic
 - `thumbnail_jobs.go`: sequential thumbnail generation state, pause/stop controls, and cache cleanup
-- `media_tools.go`: FFmpeg split/contact-sheet/transcode logic and H.264 thumbnail decoder
+- `transcode_jobs.go`: unified concurrent media job manager (`split`, `merge`, `transcode`) with real-time percentage progress, cancellation, and per-file busy locks
+- `media_tools.go`: FFmpeg split/merge/contact-sheet/transcode logic, `-progress pipe:1` streaming, and H.264 thumbnail decoder
 - `media_durations.go`: cached, concurrent duration probing for playlist rows (pure Go MP4 reader, ffprobe otherwise)
 - `playlist_menu.go`: native playlist row context menu (rebuilt per locale) and Reveal in Finder/folder
 - `system_open.go`: queues files the OS asks ViPlay to open (Finder Open With) until the frontend is ready
@@ -50,13 +51,15 @@
 - Vue requests the selected catalog from the Wails backend before mounting; the same call activates the backend locale.
 - The selected locale is saved in local storage, while catalogs remain embedded only in the Go binary.
 - Unknown locale codes fall back to English.
+- Split, merge, and transcode can run concurrently on different files; `jobManager` streams real-time `0–100%` progress for all active jobs into the unified topbar pill and playlist status list while locking any file involved in an active operation against overlapping edits or deletion (`error.fileBusy`).
 - Split does not re-encode; `ffprobe` measures the actual split time from the first part.
 - Merge combines two or more compatible videos losslessly via FFmpeg's concat demuxer (`-f concat -safe 0 -c copy`) in the order selected in the playlist drawer, writing `<first>_merged<ext>` and optionally trashing originals.
 - Contact sheets distribute frames evenly into a four-column JPEG grid.
-- Re-encoding recommends available HEVC/AV1 software encoders, writes Matroska, validates codec/duration/size, then removes the source.
-- Playlist thumbnails are generated sequentially with progress, cooperative pause/stop controls, and user-triggered cache cleanup.
+- Re-encoding recommends available HEVC/AV1/H.264 software encoders, validates codec/duration/size, and optionally removes the source.
+- Playlist thumbnails hydrate immediately from an in-memory cache index (`MediaItem.ThumbnailReady`) and generate sequentially for uncached files (pure-Go H.264 decoder first, `ffmpeg -skip_frame nokey` fallback for HEVC/AV1/MKV/WebM/AVI) with cooperative pause/stop/resume controls that respect manual user stops.
 - FFmpeg filters are detected at runtime; `drawtext`, which may be absent in Homebrew FFmpeg, is optional.
-- On macOS, libmpv plays files directly without proxies and reports state through the `player:event` Wails event.
+- On macOS, libmpv plays files directly without proxies (with atomic main-thread render coalescing and VSync swap reporting) and reports state through the `player:event` Wails event.
+- Playlist supports `⌘F` instant search/filtering, timeline hover timestamp preview, `↑`/`↓` and wheel volume control, and persisted playback settings (`volume`, `muted`, `speed`, `seekStep`).
 - Missing FFmpeg errors contain platform-specific installation commands in the active language.
 - Error notifications remain for 15 seconds; details wrap, scroll, and can be selected.
 

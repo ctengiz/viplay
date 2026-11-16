@@ -33,10 +33,10 @@ func TestThumbnailManagerPauseResumeAndStop(t *testing.T) {
 	release := make(chan struct{}, 2)
 	done := make(chan struct{})
 	go func() {
-		manager.run([]string{"first.mp4", "second.mp4"}, func(path string) error {
+		manager.run([]string{"first.mp4", "second.mp4"}, func(path string) (bool, error) {
 			started <- path
 			<-release
-			return nil
+			return false, nil
 		})
 		close(done)
 	}()
@@ -992,5 +992,181 @@ func TestMergeVideosWithSystemFFmpeg(t *testing.T) {
 	}
 	if gotName := filepath.Base(trashed.Item.Path); gotName != "clip1_merged_2.mp4" {
 		t.Fatalf("second merged name = %q, want clip1_merged_2.mp4", gotName)
+	}
+}
+
+func TestJobManagerConcurrentAndPerFileLock(t *testing.T) {
+	dir := t.TempDir()
+	fileA := filepath.Join(dir, "a.mp4")
+	fileB := filepath.Join(dir, "b.mp4")
+	fileC := filepath.Join(dir, "c.mp4")
+	fileD := filepath.Join(dir, "d.mp4")
+	for _, p := range []string{fileA, fileB, fileC, fileD} {
+		if err := os.WriteFile(p, []byte("video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	server := newMediaServer()
+	for _, p := range []string{fileA, fileB, fileC, fileD} {
+		server.allow(p)
+	}
+	app := NewApp(server)
+
+	var snapshots [][]MediaJob
+	app.jobs.setObserver(func(list []MediaJob) {
+		snapshots = append(snapshots, list)
+	})
+
+	// Start concurrent split on A, merge on B+C, and transcode on D.
+	splitID, ok := app.jobs.start("split", []string{fileA}, "a.mp4", "00:10", 20, func() {})
+	if !ok {
+		t.Fatal("expected split job on fileA to start")
+	}
+	mergeID, ok := app.jobs.start("merge", []string{fileB, fileC}, "b.mp4 +1", "2", 40, func() {})
+	if !ok {
+		t.Fatal("expected merge job on fileB+fileC to start concurrently")
+	}
+	transcodeID, ok := app.jobs.start("transcode", []string{fileD}, "d.mp4", "HEVC (H.265)", 60, func() {})
+	if !ok {
+		t.Fatal("expected transcode job on fileD to start concurrently")
+	}
+
+	if got := len(app.ActiveJobs()); got != 3 {
+		t.Fatalf("ActiveJobs len = %d, want 3", got)
+	}
+
+	// Attempting a second operation on any busy file (A, B, C, or D) must fail with error.fileBusy.
+	if _, ok := app.jobs.start("split", []string{fileB}, "b.mp4", "", 10, func() {}); ok {
+		t.Fatal("expected second job on busy fileB to be rejected")
+	}
+	if _, err := app.SplitVideo(fileA, 5); err == nil || err.Error() != app.tr("error.fileBusy") {
+		t.Fatalf("SplitVideo on busy fileA = %v, want %q", err, app.tr("error.fileBusy"))
+	}
+	if _, err := app.SplitVideoAtMarkers(fileB, []float64{2}); err == nil || err.Error() != app.tr("error.fileBusy") {
+		t.Fatalf("SplitVideoAtMarkers on busy fileB = %v, want %q", err, app.tr("error.fileBusy"))
+	}
+	if _, err := app.MergeVideos([]string{fileC, fileD}, false); err == nil || err.Error() != app.tr("error.fileBusy") {
+		t.Fatalf("MergeVideos on busy fileC = %v, want %q", err, app.tr("error.fileBusy"))
+	}
+	if _, err := app.TranscodeOptions(fileA); err == nil || err.Error() != app.tr("error.fileBusy") {
+		t.Fatalf("TranscodeOptions on busy fileA = %v, want %q", err, app.tr("error.fileBusy"))
+	}
+	if err := app.DeleteVideo(fileC); err == nil || err.Error() != app.tr("error.fileBusy") {
+		t.Fatalf("DeleteVideo on busy fileC = %v, want %q", err, app.tr("error.fileBusy"))
+	}
+
+	// Update percentage progress for split and merge and verify unified job reporting.
+	app.jobs.update(splitID, 10, 0, "2.0x")
+	app.jobs.update(mergeID, 30, 0, "4.5x")
+	app.jobs.update(transcodeID, 15, 48, "1.5x")
+
+	jobs := app.ActiveJobs()
+	wantPercents := map[string]float64{
+		splitID:     50,
+		mergeID:     75,
+		transcodeID: 25,
+	}
+	for _, job := range jobs {
+		if want, exists := wantPercents[job.ID]; exists {
+			if job.Percent != want {
+				t.Fatalf("job %s (%s) percent = %v, want %v", job.ID, job.Kind, job.Percent, want)
+			}
+		}
+	}
+
+	app.jobs.finish(splitID)
+	app.jobs.finish(mergeID)
+	app.jobs.finish(transcodeID)
+	if got := len(app.ActiveJobs()); got != 0 {
+		t.Fatalf("ActiveJobs len after finish = %d, want 0", got)
+	}
+	if len(snapshots) == 0 {
+		t.Fatal("expected observer snapshots to be emitted")
+	}
+}
+
+func TestThumbnailCacheIndexAndNonH264Fallback(t *testing.T) {
+	ffmpegPath, err := requireMediaTool("ffmpeg", "en")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	mkvPath := filepath.Join(dir, "sample.mkv")
+	cmd := exec.Command(
+		ffmpegPath, "-y",
+		"-f", "lavfi", "-i", "color=c=navy:s=160x120:d=1",
+		"-c:v", "mpeg4",
+		mkvPath,
+	)
+	if out, runErr := cmd.CombinedOutput(); runErr != nil {
+		t.Fatalf("ffmpeg test sample failed: %v (%s)", runErr, string(out))
+	}
+
+	stat, err := os.Stat(mkvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCachedThumbnailInfo(mkvPath, stat) {
+		t.Fatal("expected fresh file not to report cached thumbnail")
+	}
+
+	cachePath, cached, err := ensureThumbnailCached(mkvPath)
+	if err != nil {
+		t.Fatalf("ensureThumbnailCached fallback failed: %v", err)
+	}
+	defer func() { _ = removeThumbnailFor(mkvPath) }()
+	if cached {
+		t.Fatal("expected initial generation to report cached=false")
+	}
+	if _, statErr := os.Stat(cachePath); statErr != nil {
+		t.Fatalf("expected cached jpeg on disk: %v", statErr)
+	}
+	if !hasCachedThumbnailInfo(mkvPath, stat) {
+		t.Fatal("expected in-memory thumbnail index to report cached=true")
+	}
+
+	_, cachedAgain, err := ensureThumbnailCached(mkvPath)
+	if err != nil {
+		t.Fatalf("second ensureThumbnailCached failed: %v", err)
+	}
+	if !cachedAgain {
+		t.Fatal("expected second ensureThumbnailCached to report cached=true")
+	}
+}
+
+func TestRecentStoreSkipsRedundantWriteWhenAlreadyFirst(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "recent.json")
+	store := &recentStore{path: storePath}
+	first := "/tmp/alpha.mp4"
+	second := "/tmp/beta.mp4"
+
+	if err := store.add(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.add(second); err != nil {
+		t.Fatal(err)
+	}
+	statBefore, err := os.Stat(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(15 * time.Millisecond)
+	if err := store.add(second); err != nil {
+		t.Fatal(err)
+	}
+	statAfter, err := os.Stat(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !statAfter.ModTime().Equal(statBefore.ModTime()) {
+		t.Fatalf("expected redundant add not to rewrite disk file (%v vs %v)", statBefore.ModTime(), statAfter.ModTime())
+	}
+	items, err := store.list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0] != second || items[1] != first {
+		t.Fatalf("unexpected recent list: %#v", items)
 	}
 }

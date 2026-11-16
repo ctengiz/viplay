@@ -21,8 +21,19 @@ func mediaDurationCached(path, locale string) (float64, bool) {
 	duration := 0.0
 	if probe, err := probeMediaPureGo(path); err == nil && probe.Duration > 0 {
 		duration = probe.Duration
+		if probe.ProbeAvailable {
+			mediaInfoCache.Store(key, probe)
+		}
 	} else if result, err := probeWithFFprobe(path, locale); err == nil {
 		duration = probeDuration(result)
+		baseInfo := MediaInfo{Size: info.Size()}
+		if probe.Container != "" {
+			baseInfo.Container = probe.Container
+		}
+		enriched := mediaInfoFromProbe(baseInfo, result)
+		if enriched.ProbeAvailable {
+			mediaInfoCache.Store(key, enriched)
+		}
 	}
 	if duration <= 0 {
 		return 0, false

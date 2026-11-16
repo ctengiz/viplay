@@ -129,6 +129,8 @@ export class MediaItem {
     "path": string;
     "url": string;
     "thumbnailUrl": string;
+    "thumbnailReady"?: boolean;
+    "duration"?: number;
     "kind": string;
     "size": number;
     "modTime": number;
@@ -169,6 +171,71 @@ export class MediaItem {
     }
 }
 
+export class MediaJob {
+    "id": string;
+    "kind": string;
+    "paths": string[];
+    "name": string;
+    "label": string;
+    "stage": string;
+    "percent": number;
+    "speed": string;
+    "fps": number;
+    "currentTime": number;
+    "totalTime": number;
+
+    /** Creates a new MediaJob instance. */
+    constructor($$source: Partial<MediaJob> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("kind" in $$source)) {
+            this["kind"] = "";
+        }
+        if (!("paths" in $$source)) {
+            this["paths"] = [];
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+        if (!("stage" in $$source)) {
+            this["stage"] = "";
+        }
+        if (!("percent" in $$source)) {
+            this["percent"] = 0;
+        }
+        if (!("speed" in $$source)) {
+            this["speed"] = "";
+        }
+        if (!("fps" in $$source)) {
+            this["fps"] = 0;
+        }
+        if (!("currentTime" in $$source)) {
+            this["currentTime"] = 0;
+        }
+        if (!("totalTime" in $$source)) {
+            this["totalTime"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new MediaJob instance from a string or object.
+     */
+    static createFrom($$source: any = {}): MediaJob {
+        const $$createField2_0 = $$createType3;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("paths" in $$parsedSource) {
+            $$parsedSource["paths"] = $$createField2_0($$parsedSource["paths"]);
+        }
+        return new MediaJob($$parsedSource as Partial<MediaJob>);
+    }
+}
+
 export class MergeResult {
     "item": MediaItem;
     "deleted": boolean;
@@ -189,7 +256,7 @@ export class MergeResult {
      * Creates a new MergeResult instance from a string or object.
      */
     static createFrom($$source: any = {}): MergeResult {
-        const $$createField0_0 = $$createType3;
+        const $$createField0_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("item" in $$parsedSource) {
             $$parsedSource["item"] = $$createField0_0($$parsedSource["item"]);
@@ -218,7 +285,7 @@ export class MultiSplitResult {
      * Creates a new MultiSplitResult instance from a string or object.
      */
     static createFrom($$source: any = {}): MultiSplitResult {
-        const $$createField0_0 = $$createType4;
+        const $$createField0_0 = $$createType3;
         const $$createField1_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("paths" in $$parsedSource) {
@@ -296,7 +363,7 @@ export class ThumbnailProgress {
      * Creates a new ThumbnailProgress instance from a string or object.
      */
     static createFrom($$source: any = {}): ThumbnailProgress {
-        const $$createField5_0 = $$createType4;
+        const $$createField5_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("completedPaths" in $$parsedSource) {
             $$parsedSource["completedPaths"] = $$createField5_0($$parsedSource["completedPaths"]);
@@ -427,7 +494,7 @@ export class TranscodeResult {
      * Creates a new TranscodeResult instance from a string or object.
      */
     static createFrom($$source: any = {}): TranscodeResult {
-        const $$createField0_0 = $$createType3;
+        const $$createField0_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("item" in $$parsedSource) {
             $$parsedSource["item"] = $$createField0_0($$parsedSource["item"]);
@@ -440,6 +507,6 @@ export class TranscodeResult {
 const $$createType0 = LocaleOption.createFrom;
 const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $Create.Map($Create.Any, $Create.Any);
-const $$createType3 = MediaItem.createFrom;
-const $$createType4 = $Create.Array($Create.Any);
+const $$createType3 = $Create.Array($Create.Any);
+const $$createType4 = MediaItem.createFrom;
 const $$createType5 = $Create.Array($Create.Any);

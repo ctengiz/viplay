@@ -2,12 +2,9 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/color"
 	"image/jpeg"
 	"os"
 	"path/filepath"
@@ -121,24 +118,44 @@ func audioCodec(s *mp4.StsdBox) string {
 	return ""
 }
 
-func thumbnailFor(path string) ([]byte, error) {
+func ensureThumbnailCached(path string) (string, bool, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return "", false, err
 	}
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", path, stat.Size(), stat.ModTime().UnixNano())))
-	cachePath := filepath.Join(thumbnailCacheDir(), hex.EncodeToString(hash[:])+".jpg")
-	if data, readErr := os.ReadFile(cachePath); readErr == nil {
-		return data, nil
+	cacheDir := thumbnailCacheDir()
+	fileName := thumbnailCacheFileName(path, stat)
+	cachePath := filepath.Join(cacheDir, fileName)
+	if hasCachedThumbnailInfo(path, stat) {
+		if info, statErr := os.Stat(cachePath); statErr == nil && info.Size() > 0 {
+			return cachePath, true, nil
+		}
+		forgetCachedThumbnailName(cacheDir, fileName)
+	} else if info, statErr := os.Stat(cachePath); statErr == nil && info.Size() > 0 {
+		recordCachedThumbnailName(cacheDir, fileName)
+		return cachePath, true, nil
 	}
 	data, err := decodeH264Thumbnail(path)
 	if err != nil {
+		data, err = decodeFFmpegThumbnail(path)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if os.MkdirAll(cacheDir, 0o700) == nil {
+		if writeErr := os.WriteFile(cachePath, data, 0o600); writeErr == nil {
+			recordCachedThumbnailName(cacheDir, fileName)
+		}
+	}
+	return cachePath, false, nil
+}
+
+func thumbnailFor(path string) ([]byte, error) {
+	cachePath, _, err := ensureThumbnailCached(path)
+	if err != nil {
 		return nil, err
 	}
-	if os.MkdirAll(filepath.Dir(cachePath), 0o700) == nil {
-		_ = os.WriteFile(cachePath, data, 0o600)
-	}
-	return data, nil
+	return os.ReadFile(cachePath)
 }
 
 func decodeH264Thumbnail(path string) ([]byte, error) {
@@ -160,30 +177,57 @@ func frameJPEG(frame *goh264.Frame) ([]byte, error) {
 		outH = 150
 		outW = w * outH / h
 	}
-	img := image.NewRGBA(image.Rect(0, 0, outW, outH))
+	if outW < 1 {
+		outW = 1
+	}
+	if outH < 1 {
+		outH = 1
+	}
+	// Encode directly from YCbCr 4:2:0 planes so image/jpeg uses its fast path without RGBA round-trips.
+	img := image.NewYCbCr(image.Rect(0, 0, outW, outH), image.YCbCrSubsampleRatio420)
+	yMax := len(frame.Y)
+	cbMax := len(frame.Cb)
+	crMax := len(frame.Cr)
 	for oy := 0; oy < outH; oy++ {
+		sy := oy*h/outH + frame.CropTop
+		yRowOff := sy * frame.YStride
+		dstYRow := oy * img.YStride
 		for ox := 0; ox < outW; ox++ {
-			x, y := ox*w/outW+frame.CropLeft, oy*h/outH+frame.CropTop
-			ci := 0
+			sx := ox*w/outW + frame.CropLeft
+			yi := yRowOff + sx
+			if yi >= 0 && yi < yMax {
+				img.Y[dstYRow+ox] = frame.Y[yi]
+			}
+		}
+	}
+	cw := (outW + 1) / 2
+	ch := (outH + 1) / 2
+	for cy := 0; cy < ch; cy++ {
+		sy := (cy*2)*h/outH + frame.CropTop
+		dstCRow := cy * img.CStride
+		for cx := 0; cx < cw; cx++ {
+			sx := (cx*2)*w/outW + frame.CropLeft
+			ci := -1
 			switch frame.ChromaFormatIDC {
 			case 0:
 				ci = -1
 			case 1:
-				ci = (y/2)*frame.CStride + x/2
+				ci = (sy/2)*frame.CStride + sx/2
 			case 2:
-				ci = y*frame.CStride + x/2
+				ci = sy*frame.CStride + sx/2
 			default:
-				ci = y*frame.CStride + x
+				ci = sy*frame.CStride + sx
 			}
 			cb, cr := uint8(128), uint8(128)
-			if ci >= 0 && ci < len(frame.Cb) && ci < len(frame.Cr) {
+			if ci >= 0 && ci < cbMax && ci < crMax {
 				cb, cr = frame.Cb[ci], frame.Cr[ci]
 			}
-			r, g, b := color.YCbCrToRGB(frame.Y[y*frame.YStride+x], cb, cr)
-			img.SetRGBA(ox, oy, color.RGBA{r, g, b, 255})
+			img.Cb[dstCRow+cx] = cb
+			img.Cr[dstCRow+cx] = cr
 		}
 	}
 	var data bytes.Buffer
+	data.Grow(12 * 1024)
 	if err := jpeg.Encode(&data, img, &jpeg.Options{Quality: 78}); err != nil {
 		return nil, err
 	}
@@ -191,22 +235,29 @@ func frameJPEG(frame *goh264.Frame) ([]byte, error) {
 }
 
 type recentStore struct {
-	mu   sync.Mutex
-	path string
+	mu     sync.Mutex
+	path   string
+	loaded bool
+	items  []string
 }
 
 func newRecentStore() *recentStore {
 	dir, _ := os.UserConfigDir()
 	return &recentStore{path: filepath.Join(dir, "ViPlay", "recent.json")}
 }
-func (r *recentStore) read() []string {
-	data, err := os.ReadFile(r.path)
-	if err != nil {
-		return nil
+func (r *recentStore) readLocked() []string {
+	if r.loaded {
+		return r.items
 	}
-	var paths []string
-	_ = json.Unmarshal(data, &paths)
-	return paths
+	data, err := os.ReadFile(r.path)
+	if err == nil {
+		var paths []string
+		if json.Unmarshal(data, &paths) == nil {
+			r.items = paths
+		}
+	}
+	r.loaded = true
+	return r.items
 }
 func (r *recentStore) add(path string) error {
 	r.mu.Lock()
@@ -215,33 +266,43 @@ func (r *recentStore) add(path string) error {
 	if err != nil {
 		return err
 	}
-	paths := r.read()
-	next := []string{abs}
+	paths := r.readLocked()
+	if len(paths) > 0 && paths[0] == abs {
+		return nil
+	}
+	next := make([]string, 0, min(len(paths)+1, 50))
+	next = append(next, abs)
 	for _, p := range paths {
 		if p != abs && len(next) < 50 {
 			next = append(next, p)
 		}
 	}
-	return r.write(next)
+	return r.writeLocked(next)
 }
 func (r *recentStore) remove(path string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	abs, _ := filepath.Abs(path)
-	var next []string
-	for _, p := range r.read() {
-		if p != abs {
-			next = append(next, p)
+	paths := r.readLocked()
+	changed := false
+	next := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == abs {
+			changed = true
+			continue
 		}
+		next = append(next, p)
 	}
-	_ = r.write(next)
+	if changed {
+		_ = r.writeLocked(next)
+	}
 }
 func (r *recentStore) replace(oldPath, newPath string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	oldAbs, _ := filepath.Abs(oldPath)
 	newAbs, _ := filepath.Abs(newPath)
-	paths := r.read()
+	paths := r.readLocked()
 	next := make([]string, 0, len(paths))
 	for _, p := range paths {
 		if p == oldAbs {
@@ -251,7 +312,7 @@ func (r *recentStore) replace(oldPath, newPath string) {
 			next = append(next, p)
 		}
 	}
-	_ = r.write(next)
+	_ = r.writeLocked(next)
 }
 func containsPath(paths []string, path string) bool {
 	for _, candidate := range paths {
@@ -264,9 +325,10 @@ func containsPath(paths []string, path string) bool {
 func (r *recentStore) list() ([]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.read(), nil
+	paths := r.readLocked()
+	return append([]string(nil), paths...), nil
 }
-func (r *recentStore) write(paths []string) error {
+func (r *recentStore) writeLocked(paths []string) error {
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o700); err != nil {
 		return err
 	}
@@ -274,5 +336,10 @@ func (r *recentStore) write(paths []string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(r.path, data, 0o600)
+	if err := os.WriteFile(r.path, data, 0o600); err != nil {
+		return err
+	}
+	r.items = paths
+	r.loaded = true
+	return nil
 }

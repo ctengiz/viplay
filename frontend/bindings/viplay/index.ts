@@ -11,6 +11,7 @@ export {
     LocalizationPayload,
     MediaInfo,
     MediaItem,
+    MediaJob,
     MergeResult,
     MultiSplitResult,
     SplitResult,

@@ -92,11 +92,14 @@ html.mac .topbar{padding-left:88px}
 .transcode-pill-stop:hover{background:rgba(240,107,98,.2);color:#ff857c}
 .transcode-pill-bar{position:absolute;left:0;bottom:0;height:2px;background:var(--amber);transition:width .2s ease-out;pointer-events:none}
 .transcode-pill-bar.indeterminate{width:38%;animation:transcode-slide 1.2s ease-in-out infinite}
-.transcode-status{padding:11px 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(231,168,75,.07),#0c0e11)}
+.transcode-status{padding:11px 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(231,168,75,.07),#0c0e11);display:flex;flex-direction:column;gap:10px}
+.transcode-status-item+.transcode-status-item{padding-top:10px;border-top:1px solid rgba(255,255,255,.06)}
 .transcode-status-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.transcode-status-title{min-width:0;display:flex;align-items:center;gap:7px;color:var(--amber)}
+.transcode-status-title{min-width:0;display:flex;align-items:center;gap:6px;color:var(--amber);cursor:pointer}
 .transcode-status-title svg{flex:none}
 .transcode-status-title strong{min-width:0;color:#ece9e2;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.job-kind-badge{flex:none;padding:1px 5px;border-radius:4px;background:rgba(231,168,75,.16);color:var(--amber);font-size:9px;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+.job-count-badge{width:16px;height:16px;border-radius:50%;background:var(--amber);color:#171109!important;font-size:10px;font-weight:700!important;display:grid;place-items:center}
 .transcode-status-head button{flex:none;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:#8c8f96;display:grid;place-items:center;cursor:pointer}
 .transcode-status-head button:hover{background:rgba(240,107,98,.18);color:#ff857c}
 .transcode-status .transcode-progress-track{margin-top:8px}
@@ -130,3 +133,13 @@ html.mac .topbar{padding-left:88px}
 .queue-merge-actions .confirm:hover:not(:disabled){background:#f0b862}
 .queue-merge-actions button:disabled{opacity:.45;cursor:not-allowed}
 @keyframes transcode-slide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+.queue-item{contain:layout style paint}
+.timeline-tooltip{position:absolute;z-index:3;bottom:26px;padding:3px 6px;border:1px solid #35383f;border-radius:5px;background:rgba(19,21,25,.95);color:#f3f0e8;font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap;transform:translateX(-50%);pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.queue-filter{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid var(--line);background:#0c0e11;color:#6d7078}
+.queue-filter:focus-within{color:var(--amber);background:#0f1216}
+.queue-filter svg{flex:none}
+.queue-filter input{flex:1;min-width:0;height:24px;border:0;outline:0;background:transparent;color:#e8e5de;font-size:12px}
+.queue-filter input::placeholder{color:#5e6168}
+.queue-filter input::-webkit-search-cancel-button{display:none}
+.queue-filter button{flex:none;width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:#777a81;display:grid;place-items:center;cursor:pointer}
+.queue-filter button:hover{background:#202329;color:#fff}

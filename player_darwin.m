@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <mpv/client.h>
 #include <mpv/render_gl.h>
+#include <stdatomic.h>
 
 static void *viplayGetProcAddress(void *ctx, const char *name) {
     (void)ctx;
@@ -13,15 +14,20 @@ static void *viplayGetProcAddress(void *ctx, const char *name) {
 @interface ViPlayMpvView : NSOpenGLView {
     mpv_handle *_mpv;
     mpv_render_context *_render;
+@public
+    atomic_bool _renderScheduled;
 }
 - (instancetype)initWithFrame:(NSRect)frame mpv:(mpv_handle *)mpv;
 @end
 
 static void viplayRenderUpdate(void *ctx) {
     ViPlayMpvView *view = (ViPlayMpvView *)ctx;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [view setNeedsDisplay:YES];
-    });
+    if (!atomic_exchange_explicit(&view->_renderScheduled, true, memory_order_acq_rel)) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            atomic_store_explicit(&view->_renderScheduled, false, memory_order_release);
+            [view setNeedsDisplay:YES];
+        });
+    }
 }
 
 @implementation ViPlayMpvView
@@ -37,6 +43,7 @@ static void viplayRenderUpdate(void *ctx) {
     self = [super initWithFrame:frame pixelFormat:format];
     if (self) {
         _mpv = mpv;
+        atomic_init(&_renderScheduled, false);
         [self setWantsBestResolutionOpenGLSurface:YES];
         [self setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     }
@@ -65,11 +72,12 @@ static void viplayRenderUpdate(void *ctx) {
     (void)dirtyRect;
     [[self openGLContext] makeCurrentContext];
     NSSize size = [self convertRectToBacking:[self bounds]].size;
+    uint64_t flags = 0;
     if (_render == NULL) {
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
     } else {
-        mpv_render_context_update(_render);
+        flags = mpv_render_context_update(_render);
         // Layer-backed OpenGL views render into an offscreen framebuffer whose size the viewport reports.
         GLint framebuffer = 0;
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
@@ -85,6 +93,9 @@ static void viplayRenderUpdate(void *ctx) {
         mpv_render_context_render(_render, params);
     }
     [[self openGLContext] flushBuffer];
+    if (_render != NULL && (flags & MPV_RENDER_UPDATE_FRAME)) {
+        mpv_render_context_report_swap(_render);
+    }
 }
 
 - (void)reshape {

@@ -33,7 +33,7 @@ func newThumbnailManager() *thumbnailManager {
 	return manager
 }
 
-func (m *thumbnailManager) run(paths []string, generate func(string) error) {
+func (m *thumbnailManager) run(paths []string, generate func(string) (cached bool, err error)) {
 	m.mu.Lock()
 	m.generation++
 	generation := m.generation
@@ -73,7 +73,7 @@ func (m *thumbnailManager) run(paths []string, generate func(string) error) {
 		m.status.Current = filepath.Base(path)
 		m.mu.Unlock()
 
-		err := generate(path)
+		cached, err := generate(path)
 
 		m.mu.Lock()
 		if generation != m.generation {
@@ -86,7 +86,9 @@ func (m *thumbnailManager) run(paths []string, generate func(string) error) {
 		}
 		m.mu.Unlock()
 
-		time.Sleep(15 * time.Millisecond)
+		if !cached {
+			time.Sleep(15 * time.Millisecond)
+		}
 	}
 }
 
@@ -126,6 +128,82 @@ func (m *thumbnailManager) stopAndWait() {
 	m.mu.Unlock()
 }
 
+var (
+	thumbIndexMu     sync.RWMutex
+	thumbIndexLoaded bool
+	thumbIndexDir    string
+	thumbIndexFiles  map[string]struct{}
+)
+
+func ensureThumbIndexLocked(cacheDir string) {
+	if thumbIndexLoaded && thumbIndexDir == cacheDir {
+		return
+	}
+	entries, err := os.ReadDir(cacheDir)
+	files := make(map[string]struct{}, len(entries))
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				files[entry.Name()] = struct{}{}
+			}
+		}
+	}
+	thumbIndexDir = cacheDir
+	thumbIndexFiles = files
+	thumbIndexLoaded = true
+}
+
+func recordCachedThumbnailName(cacheDir, fileName string) {
+	thumbIndexMu.Lock()
+	ensureThumbIndexLocked(cacheDir)
+	thumbIndexFiles[fileName] = struct{}{}
+	thumbIndexMu.Unlock()
+}
+
+func forgetCachedThumbnailName(cacheDir, fileName string) {
+	thumbIndexMu.Lock()
+	if thumbIndexLoaded && thumbIndexDir == cacheDir {
+		delete(thumbIndexFiles, fileName)
+	}
+	thumbIndexMu.Unlock()
+}
+
+func resetCachedThumbnailIndex(cacheDir string) {
+	thumbIndexMu.Lock()
+	if !thumbIndexLoaded || thumbIndexDir == cacheDir {
+		thumbIndexFiles = make(map[string]struct{})
+		thumbIndexDir = cacheDir
+		thumbIndexLoaded = true
+	}
+	thumbIndexMu.Unlock()
+}
+
+func thumbnailCacheFileName(path string, stat os.FileInfo) string {
+	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", path, stat.Size(), stat.ModTime().UnixNano())))
+	return hex.EncodeToString(hash[:]) + ".jpg"
+}
+
+func hasCachedThumbnailInfo(path string, stat os.FileInfo) bool {
+	if stat == nil || stat.IsDir() {
+		return false
+	}
+	cacheDir := thumbnailCacheDir()
+	name := thumbnailCacheFileName(path, stat)
+	thumbIndexMu.RLock()
+	if thumbIndexLoaded && thumbIndexDir == cacheDir {
+		_, ok := thumbIndexFiles[name]
+		thumbIndexMu.RUnlock()
+		return ok
+	}
+	thumbIndexMu.RUnlock()
+
+	thumbIndexMu.Lock()
+	ensureThumbIndexLocked(cacheDir)
+	_, ok := thumbIndexFiles[name]
+	thumbIndexMu.Unlock()
+	return ok
+}
+
 func thumbnailCacheDir() string {
 	cache, _ := os.UserCacheDir()
 	return filepath.Join(cache, "ViPlay", "thumbnails")
@@ -136,8 +214,7 @@ func thumbnailCachePathAt(path, cacheDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", path, stat.Size(), stat.ModTime().UnixNano())))
-	return filepath.Join(cacheDir, hex.EncodeToString(hash[:])+".jpg"), nil
+	return filepath.Join(cacheDir, thumbnailCacheFileName(path, stat)), nil
 }
 
 func removeThumbnailFor(path string) error {
@@ -149,6 +226,7 @@ func removeThumbnailForAt(path, cacheDir string) error {
 	if err != nil {
 		return err
 	}
+	forgetCachedThumbnailName(cacheDir, filepath.Base(cachePath))
 	return os.Remove(cachePath)
 }
 
@@ -157,5 +235,7 @@ func clearThumbnailCache() error {
 }
 
 func clearThumbnailCacheAt(path string) error {
-	return os.RemoveAll(path)
+	err := os.RemoveAll(path)
+	resetCachedThumbnailIndex(path)
+	return err
 }

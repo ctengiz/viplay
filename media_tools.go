@@ -15,26 +15,39 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/thesyncim/goh264"
 )
 
+var mediaToolPathCache sync.Map
+
 func requireMediaTool(name, locale string) (string, error) {
-	// Packaged builds ship FFmpeg next to the application executable.
+	// Packaged builds ship FFmpeg next to the application executable; check before cached PATH hits.
 	if executable, err := os.Executable(); err == nil {
-		if bundled, err := exec.LookPath(filepath.Join(filepath.Dir(executable), name)); err == nil {
-			return bundled, nil
+		candidate := filepath.Join(filepath.Dir(executable), name)
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, nil
 		}
+	}
+	if cached, ok := mediaToolPathCache.Load(name); ok {
+		candidate := cached.(string)
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+		mediaToolPathCache.Delete(name)
 	}
 	path, err := exec.LookPath(name)
 	if err == nil {
+		mediaToolPathCache.Store(name, path)
 		return path, nil
 	}
 	if runtime.GOOS == "darwin" {
 		for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
 			candidate := filepath.Join(dir, name)
 			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+				mediaToolPathCache.Store(name, candidate)
 				return candidate, nil
 			}
 		}
@@ -49,17 +62,97 @@ func missingMediaToolError(name, locale string) error {
 	return fmt.Errorf("%s", translate(locale, "error.ffmpegMissing"))
 }
 
+func runFFmpegWithProgress(ctx context.Context, ffmpeg string, args []string, onProgress func(currentSec, fps float64, speed string, done bool)) ([]byte, error) {
+	fullArgs := make([]string, 0, len(args)+2)
+	fullArgs = append(fullArgs, "-progress", "pipe:1")
+	fullArgs = append(fullArgs, args...)
+	cmd := exec.CommandContext(ctx, ffmpeg, fullArgs...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	var parseWg sync.WaitGroup
+	parseWg.Add(1)
+	go func() {
+		defer parseWg.Done()
+		scanner := bufio.NewScanner(stdout)
+		var currentSec, fps float64
+		var speed string
+		var lastEmit time.Time
+		for scanner.Scan() {
+			line := scanner.Text()
+			if key, val, ok := strings.Cut(line, "="); ok {
+				key = strings.TrimSpace(key)
+				val = strings.TrimSpace(val)
+				switch key {
+				case "out_time_us":
+					if us, parseErr := strconv.ParseInt(val, 10, 64); parseErr == nil && us >= 0 {
+						currentSec = float64(us) / 1000000.0
+					}
+				case "out_time":
+					if parsed, ok := parseFFmpegTimestamp(val); ok && parsed > currentSec {
+						currentSec = parsed
+					}
+				case "fps":
+					if f, parseErr := strconv.ParseFloat(val, 64); parseErr == nil {
+						fps = f
+					}
+				case "speed":
+					speed = val
+				case "progress":
+					done := val == "end"
+					if onProgress != nil && (done || lastEmit.IsZero() || time.Since(lastEmit) >= 80*time.Millisecond) {
+						lastEmit = time.Now()
+						onProgress(currentSec, fps, speed, done)
+					}
+				}
+			}
+		}
+	}()
+	runErr := cmd.Wait()
+	parseWg.Wait()
+	return stderrBuf.Bytes(), runErr
+}
+
 func splitMP4(path string, seconds float64, locale string) (SplitResult, error) {
+	return splitMP4WithJobs(path, seconds, locale, nil)
+}
+
+func splitMP4WithJobs(path string, seconds float64, locale string, jobs *jobManager) (SplitResult, error) {
 	ffmpeg, err := requireMediaTool("ffmpeg", locale)
 	if err != nil {
 		return SplitResult{}, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var jobID string
+	if jobs != nil {
+		var ok bool
+		jobID, ok = jobs.start("split", []string{path}, filepath.Base(path), translate(locale, "jobs.kind.split"), 0, cancel)
+		if !ok {
+			return SplitResult{}, fmt.Errorf("%s", translate(locale, "error.fileBusy"))
+		}
+		defer jobs.finish(jobID)
+	}
+
 	duration, err := mediaDuration(path, locale)
 	if err != nil {
 		return SplitResult{}, err
 	}
 	if seconds <= .05 || seconds >= duration-.05 {
 		return SplitResult{}, fmt.Errorf("%s", translate(locale, "error.invalidSplitPoint"))
+	}
+	if ctx.Err() != nil {
+		return SplitResult{}, fmt.Errorf("%s", translate(locale, "error.jobCancelled"))
+	}
+	if jobs != nil {
+		jobs.setMeta(jobID, translate(locale, "jobs.kind.split"), duration)
 	}
 
 	dir := filepath.Dir(path)
@@ -85,8 +178,22 @@ func splitMP4(path string, seconds float64, locale string) (SplitResult, error) 
 		"-f", "segment", "-segment_times", formatSeconds(seconds),
 		"-reset_timestamps", "1", pattern,
 	}
-	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+	output, runErr := runFFmpegWithProgress(ctx, ffmpeg, args, func(currentSec, fps float64, speed string, done bool) {
+		if jobs != nil {
+			jobs.update(jobID, currentSec, fps, speed)
+			if done {
+				jobs.setStage(jobID, "validating")
+			}
+		}
+	})
+	if ctx.Err() != nil {
+		return SplitResult{}, fmt.Errorf("%s", translate(locale, "error.jobCancelled"))
+	}
+	if runErr != nil {
 		return SplitResult{}, mediaToolError(translate(locale, "error.splitFailed"), runErr, output)
+	}
+	if jobs != nil {
+		jobs.setStage(jobID, "validating")
 	}
 	tempFirst := filepath.Join(tempDir, "part_0"+ext)
 	tempSecond := filepath.Join(tempDir, "part_1"+ext)
@@ -108,10 +215,27 @@ func splitMP4(path string, seconds float64, locale string) (SplitResult, error) 
 }
 
 func splitMP4AtMarkers(path string, points []float64, locale string) (MultiSplitResult, error) {
+	return splitMP4AtMarkersWithJobs(path, points, locale, nil)
+}
+
+func splitMP4AtMarkersWithJobs(path string, points []float64, locale string, jobs *jobManager) (MultiSplitResult, error) {
 	ffmpeg, err := requireMediaTool("ffmpeg", locale)
 	if err != nil {
 		return MultiSplitResult{}, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var jobID string
+	if jobs != nil {
+		var ok bool
+		jobID, ok = jobs.start("split", []string{path}, filepath.Base(path), translate(locale, "jobs.kind.split"), 0, cancel)
+		if !ok {
+			return MultiSplitResult{}, fmt.Errorf("%s", translate(locale, "error.fileBusy"))
+		}
+		defer jobs.finish(jobID)
+	}
+
 	duration, err := mediaDuration(path, locale)
 	if err != nil {
 		return MultiSplitResult{}, err
@@ -119,6 +243,12 @@ func splitMP4AtMarkers(path string, points []float64, locale string) (MultiSplit
 	markers, err := normaliseSplitMarkers(points, duration, locale)
 	if err != nil {
 		return MultiSplitResult{}, err
+	}
+	if ctx.Err() != nil {
+		return MultiSplitResult{}, fmt.Errorf("%s", translate(locale, "error.jobCancelled"))
+	}
+	if jobs != nil {
+		jobs.setMeta(jobID, translate(locale, "jobs.kind.split"), duration)
 	}
 
 	dir := filepath.Dir(path)
@@ -145,8 +275,22 @@ func splitMP4AtMarkers(path string, points []float64, locale string) (MultiSplit
 		"-f", "segment", "-segment_times", strings.Join(formatted, ","),
 		"-reset_timestamps", "1", pattern,
 	}
-	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+	output, runErr := runFFmpegWithProgress(ctx, ffmpeg, args, func(currentSec, fps float64, speed string, done bool) {
+		if jobs != nil {
+			jobs.update(jobID, currentSec, fps, speed)
+			if done {
+				jobs.setStage(jobID, "validating")
+			}
+		}
+	})
+	if ctx.Err() != nil {
+		return MultiSplitResult{}, fmt.Errorf("%s", translate(locale, "error.jobCancelled"))
+	}
+	if runErr != nil {
 		return MultiSplitResult{}, mediaToolError(translate(locale, "error.splitFailed"), runErr, output)
+	}
+	if jobs != nil {
+		jobs.setStage(jobID, "validating")
 	}
 
 	paths := make([]string, len(markers)+1)
@@ -240,6 +384,10 @@ func formatConcatDemuxerList(paths []string) string {
 }
 
 func mergeVideosWithDelete(paths []string, locale string, removeOriginal func(string) error) (MergeResult, error) {
+	return mergeVideosWithJobs(paths, locale, nil, removeOriginal)
+}
+
+func mergeVideosWithJobs(paths []string, locale string, jobs *jobManager, removeOriginal func(string) error) (MergeResult, error) {
 	if len(paths) < 2 {
 		return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.mergeMinCount"))
 	}
@@ -247,6 +395,20 @@ func mergeVideosWithDelete(paths []string, locale string, removeOriginal func(st
 	if err != nil {
 		return MergeResult{}, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var jobID string
+	if jobs != nil {
+		var ok bool
+		jobName := fmt.Sprintf("%s (+%d)", filepath.Base(paths[0]), len(paths)-1)
+		jobID, ok = jobs.start("merge", paths, jobName, translate(locale, "jobs.kind.merge"), 0, cancel)
+		if !ok {
+			return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.fileBusy"))
+		}
+		defer jobs.finish(jobID)
+	}
+
 	var firstSig mergeStreamSignature
 	var totalDuration float64
 	for i, path := range paths {
@@ -264,6 +426,12 @@ func mergeVideosWithDelete(paths []string, locale string, removeOriginal func(st
 			return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.mergeIncompatible"))
 		}
 		totalDuration += sig.duration
+	}
+	if ctx.Err() != nil {
+		return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.jobCancelled"))
+	}
+	if jobs != nil {
+		jobs.setMeta(jobID, translate(locale, "jobs.kind.merge"), totalDuration)
 	}
 
 	firstPath := paths[0]
@@ -298,8 +466,22 @@ func mergeVideosWithDelete(paths []string, locale string, removeOriginal func(st
 	}
 	args = append(args, tempOutput)
 
-	if output, runErr := exec.Command(ffmpeg, args...).CombinedOutput(); runErr != nil {
+	output, runErr := runFFmpegWithProgress(ctx, ffmpeg, args, func(currentSec, fps float64, speed string, done bool) {
+		if jobs != nil {
+			jobs.update(jobID, currentSec, fps, speed)
+			if done {
+				jobs.setStage(jobID, "validating")
+			}
+		}
+	})
+	if ctx.Err() != nil {
+		return MergeResult{}, fmt.Errorf("%s", translate(locale, "error.jobCancelled"))
+	}
+	if runErr != nil {
 		return MergeResult{}, mediaToolError(translate(locale, "error.mergeFailed"), runErr, output)
+	}
+	if jobs != nil {
+		jobs.setStage(jobID, "validating")
 	}
 	outInfo, err := os.Stat(tempOutput)
 	if err != nil || outInfo.Size() == 0 {
@@ -395,6 +577,10 @@ func transcodeVideoWithDelete(path, optionID, locale string, removeOriginal func
 }
 
 func transcodeVideoWithManager(path, optionID, locale string, manager *transcodeManager, removeOriginal func(string) error) (TranscodeResult, error) {
+	return transcodeVideoWithJobs(path, optionID, locale, manager, nil, removeOriginal)
+}
+
+func transcodeVideoWithJobs(path, optionID, locale string, manager *transcodeManager, jobs *jobManager, removeOriginal func(string) error) (TranscodeResult, error) {
 	ffmpeg, err := requireMediaTool("ffmpeg", locale)
 	if err != nil {
 		return TranscodeResult{}, err
@@ -406,8 +592,18 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	codecLabel := profileByID(optionID).option.Codec
+	var jobID string
+	if jobs != nil {
+		var ok bool
+		jobID, ok = jobs.start("transcode", []string{path}, filepath.Base(path), codecLabel, 0, cancel)
+		if !ok {
+			return TranscodeResult{}, fmt.Errorf("%s", translate(locale, "error.fileBusy"))
+		}
+		defer jobs.finish(jobID)
+	}
 	if manager != nil {
-		manager.start(path, profileByID(optionID).option.Codec, 0, cancel)
+		manager.start(path, codecLabel, 0, cancel)
 		defer manager.finish()
 	}
 
@@ -434,6 +630,9 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 	}
 
 	duration := probeDuration(probe)
+	if jobs != nil {
+		jobs.setMeta(jobID, selected.Codec, duration)
+	}
 	if manager != nil {
 		manager.setMeta(selected.Codec, duration)
 	}
@@ -457,7 +656,6 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-		"-progress", "pipe:1",
 		"-i", path,
 		"-map", "0:v:0", "-map", "0:a?",
 	}
@@ -485,67 +683,29 @@ func transcodeVideoWithManager(path, optionID, locale string, manager *transcode
 		args = append(args, tempPath)
 	}
 
-	cmd := exec.CommandContext(ctx, ffmpeg, args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return TranscodeResult{}, err
-	}
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	if err := cmd.Start(); err != nil {
-		return TranscodeResult{}, err
-	}
-
-	var parseWg sync.WaitGroup
-	parseWg.Add(1)
-	go func() {
-		defer parseWg.Done()
-		scanner := bufio.NewScanner(stdout)
-		var currentSec, fps float64
-		var speed string
-		for scanner.Scan() {
-			line := scanner.Text()
-			if key, val, ok := strings.Cut(line, "="); ok {
-				key = strings.TrimSpace(key)
-				val = strings.TrimSpace(val)
-				switch key {
-				case "out_time_us":
-					if us, parseErr := strconv.ParseInt(val, 10, 64); parseErr == nil && us >= 0 {
-						currentSec = float64(us) / 1000000.0
-					}
-				case "out_time":
-					if parsed, ok := parseFFmpegTimestamp(val); ok && parsed > currentSec {
-						currentSec = parsed
-					}
-				case "fps":
-					if f, parseErr := strconv.ParseFloat(val, 64); parseErr == nil {
-						fps = f
-					}
-				case "speed":
-					speed = val
-				case "progress":
-					if manager != nil {
-						if val == "end" {
-							manager.update(currentSec, fps, speed)
-							manager.setStage("validating")
-						} else {
-							manager.update(currentSec, fps, speed)
-						}
-					}
-				}
+	stderrBytes, runErr := runFFmpegWithProgress(ctx, ffmpeg, args, func(currentSec, fps float64, speed string, done bool) {
+		if jobs != nil {
+			jobs.update(jobID, currentSec, fps, speed)
+			if done {
+				jobs.setStage(jobID, "validating")
 			}
 		}
-	}()
-
-	runErr := cmd.Wait()
-	parseWg.Wait()
+		if manager != nil {
+			manager.update(currentSec, fps, speed)
+			if done {
+				manager.setStage("validating")
+			}
+		}
+	})
 
 	if ctx.Err() != nil {
 		return TranscodeResult{}, fmt.Errorf("%s", translate(locale, "error.transcodeCancelled"))
 	}
 	if runErr != nil {
-		return TranscodeResult{}, mediaToolError(translate(locale, "error.transcodeFailed"), runErr, stderrBuf.Bytes())
+		return TranscodeResult{}, mediaToolError(translate(locale, "error.transcodeFailed"), runErr, stderrBytes)
+	}
+	if jobs != nil {
+		jobs.setStage(jobID, "validating")
 	}
 	if manager != nil {
 		manager.setStage("validating")
@@ -878,8 +1038,15 @@ func availableOutput(base, ext string) string {
 	}
 }
 
+var h264WorkspacePool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 2*1024*1024)
+		return &buf
+	},
+}
+
 // decodeH264FrameAt is retained for the lightweight in-app thumbnail cache.
-// User-triggered split, contact-sheet, and transcoding operations use the system FFmpeg.
+// Non-H.264 or non-MP4 containers fall back to decodeFFmpegThumbnail.
 // The frame is taken at fraction of the duration so the moov box is parsed only once.
 func decodeH264FrameAt(path string, fraction float64) (*goh264.Frame, error) {
 	f, parsed, err := decodeMP4(path)
@@ -926,9 +1093,12 @@ func decodeH264FrameAt(path string, fraction float64) (*goh264.Frame, error) {
 	if _, err := decoder.ConfigureAVCC(configBuffer.Bytes()); err != nil {
 		return nil, err
 	}
-	workspace := make([]byte, 2*1024*1024)
+	wsPtr := h264WorkspacePool.Get().(*[]byte)
+	defer h264WorkspacePool.Put(wsPtr)
+	workspace := *wsPtr
+	var packet bytes.Buffer
 	for n := start; n <= target+8 && n <= track.GetNrSamples(); n++ {
-		var packet bytes.Buffer
+		packet.Reset()
 		if err := parsed.CopySampleData(&packet, f, track, n, n, workspace); err != nil {
 			return nil, err
 		}
@@ -942,4 +1112,51 @@ func decodeH264FrameAt(path string, fraction float64) (*goh264.Frame, error) {
 		return frames[len(frames)-1], nil
 	}
 	return nil, fmt.Errorf("%s", translate(defaultLocale, "error.frameDecode"))
+}
+
+// decodeFFmpegThumbnail extracts a single scaled JPEG frame for codecs/containers
+// that the pure-Go H.264 MP4 decoder does not handle (HEVC, AV1, MKV, WebM, AVI, MOV).
+func decodeFFmpegThumbnail(path string) ([]byte, error) {
+	ffmpeg, err := requireMediaTool("ffmpeg", defaultLocale)
+	if err != nil {
+		return nil, err
+	}
+	seekSec := 0.5
+	if stat, statErr := os.Stat(path); statErr == nil {
+		key := fmt.Sprintf("%s:%d:%d", path, stat.Size(), stat.ModTime().UnixNano())
+		if cachedDur, ok := durationCache.Load(key); ok {
+			if d := cachedDur.(float64); d > 0 {
+				seekSec = max(0.1, d*0.1)
+			}
+		}
+	}
+	tryExtract := func(ss float64, keyframeOnly bool) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
+		if ss > 0 {
+			args = append(args, "-ss", strconv.FormatFloat(ss, 'f', 2, 64))
+		}
+		if keyframeOnly {
+			args = append(args, "-skip_frame", "nokey")
+		}
+		args = append(args,
+			"-i", path,
+			"-an", "-sn", "-dn",
+			"-frames:v", "1",
+			"-vf", "scale=240:150:force_original_aspect_ratio=decrease",
+			"-pix_fmt", "yuvj420p",
+			"-q:v", "5",
+			"-f", "image2pipe", "-vcodec", "mjpeg", "-",
+		)
+		out, runErr := exec.CommandContext(ctx, ffmpeg, args...).Output()
+		if runErr != nil || len(out) < 4 || out[0] != 0xff || out[1] != 0xd8 {
+			return nil, fmt.Errorf("%s", translate(defaultLocale, "error.frameDecode"))
+		}
+		return out, nil
+	}
+	if out, err := tryExtract(seekSec, true); err == nil {
+		return out, nil
+	}
+	return tryExtract(0, false)
 }

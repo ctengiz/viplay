@@ -71,14 +71,25 @@ func (m *mediaServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/thumbnail" {
-		data, err := thumbnailFor(abs)
+		cachePath, _, err := ensureThumbnailCached(abs)
+		if err != nil {
+			http.Error(w, "thumbnail unavailable", http.StatusNotFound)
+			return
+		}
+		tf, err := os.Open(cachePath)
+		if err != nil {
+			http.Error(w, "thumbnail unavailable", http.StatusNotFound)
+			return
+		}
+		defer tf.Close()
+		tInfo, err := tf.Stat()
 		if err != nil {
 			http.Error(w, "thumbnail unavailable", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
-		_, _ = w.Write(data)
+		http.ServeContent(w, r, tInfo.Name(), tInfo.ModTime(), tf)
 		return
 	}
 	f, err := os.Open(abs)

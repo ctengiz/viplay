@@ -221,7 +221,21 @@
       "merge.errorTitle": "Videos could not be merged",
       "error.mergeMinCount": "Select at least 2 videos to merge.",
       "error.mergeIncompatible": "Selected videos must share the same container, codec, and resolution for lossless merging.",
-      "error.mergeFailed": "The videos could not be merged"
+      "error.mergeFailed": "The videos could not be merged",
+      "error.fileBusy": "An operation is already running on this file.",
+      "error.jobCancelled": "The operation was cancelled.",
+      "jobs.kind.split": "Split",
+      "jobs.kind.merge": "Merge",
+      "jobs.kind.transcode": "Encode",
+      "jobs.showStatus": "Show active operations",
+      "jobs.cancelAction": "Cancel operation",
+      "jobs.cancelledTitle": "Operation cancelled",
+      "jobs.cancelled": "The source file is unchanged.",
+      "queue.filterPlaceholder": "Filter playlist…",
+      "queue.filterClear": "Clear filter",
+      "queue.noMatches": "No matching videos",
+      "shortcuts.volume": "Volume up / down",
+      "shortcuts.filterQueue": "Filter playlist"
     },
     "tr": {
       "language.label": "Dil",
@@ -439,7 +453,21 @@
       "merge.errorTitle": "Videolar birleştirilemedi",
       "error.mergeMinCount": "Birleştirmek için en az 2 video seçin.",
       "error.mergeIncompatible": "Kayıpsız birleştirme için seçilen videolar aynı konteyner, codec ve çözünürlükte olmalıdır.",
-      "error.mergeFailed": "Videolar birleştirilemedi"
+      "error.mergeFailed": "Videolar birleştirilemedi",
+      "error.fileBusy": "Bu dosya üzerinde zaten devam eden bir işlem var.",
+      "error.jobCancelled": "İşlem iptal edildi.",
+      "jobs.kind.split": "Böl",
+      "jobs.kind.merge": "Birleştir",
+      "jobs.kind.transcode": "Kodla",
+      "jobs.showStatus": "Devam eden işlemleri göster",
+      "jobs.cancelAction": "İşlemi iptal et",
+      "jobs.cancelledTitle": "İşlem iptal edildi",
+      "jobs.cancelled": "Kaynak dosya değişmedi.",
+      "queue.filterPlaceholder": "Listede ara…",
+      "queue.filterClear": "Aramayı temizle",
+      "queue.noMatches": "Eşleşen video bulunamadı",
+      "shortcuts.volume": "Sesi aç / kıs",
+      "shortcuts.filterQueue": "Oynatma listesinde ara"
     }
   }
 }
